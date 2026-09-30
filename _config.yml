@@ -1,0 +1,35 @@
+---
+title: "Zero to Hero: Go"
+description: "A self-paced, project-based 34-day curriculum — from absolute beginner to production-minded Go developer."
+
+theme: jekyll-theme-cayman
+
+markdown: kramdown
+kramdown:
+  input: GFM
+
+permalink: pretty
+
+plugins:
+  - jekyll-relative-links
+
+relative_links:
+  enabled:     true
+  collections: true
+
+exclude:
+  - CLAUDE.md
+  - go.work
+  - go.work.sum
+  - "day-*/go.mod"
+  - "day-*/go.sum"
+  - "day-*/main.go"
+  - "day-*/calc_test.go"
+  - "day-*/wordcount/counter.go"
+  - "capstone/*/go.mod"
+  - "capstone/*/go.sum"
+  - "capstone/*/main.go"
+  - ".gitignore"
+  - "memory/"
+  - "vendor/"
+  - "node_modules/"
