@@ -1,35 +1,66 @@
-# Binaries
+# Binaries produced by go build
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 
-# Test binary, built with go test -c
+# Test binaries produced by go test -c
 *.test
 
-# Output of go build
+# Build output directories
 /bin/
 /dist/
+/out/
 
-# Dependency directories
+# Dependency vendor directory
 vendor/
 
-# Go workspace sum file
+# Go workspace sum file (generated, not committed)
 go.work.sum
 
-# pprof output
+# pprof profiles
 *.prof
-*.out
 cpu.prof
 mem.prof
+trace.out
 
-# IDE
+# go test -coverprofile output
+coverage.out
+coverage.html
+
+# go test output
+*.out
+
+# SQLite databases (day-23 and later exercises)
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE and editor directories/files
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
-# OS
+# OS-generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
+
+# goreleaser output
+dist/
+
+# Claude Code memory (local only, not for learners)
+memory/
