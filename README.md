@@ -2,6 +2,8 @@
 
 A self-paced, project-based 34-day curriculum — from absolute beginner to production-minded Go developer.
 
+**[📖 Read the course at mmussett.github.io/zero2hero-golang](https://mmussett.github.io/zero2hero-golang/)**
+
 Each day pairs focused concepts with a hands-on project. Earlier projects are revisited and improved rather than discarded.
 
 ## Prerequisites
