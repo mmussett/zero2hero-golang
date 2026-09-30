@@ -101,3 +101,13 @@ Implement stages: `Lowercase`, `RemoveEmpty`, `Deduplicate`, `TrimSpaces`, `Filt
 Use the functional options pattern for a `PipelineConfig` that controls parallelism.
 
 **Extension ideas:** make `Stage` operate on `chan string` for streaming; add error propagation.
+
+## Official Documentation
+
+- [`strings`](https://pkg.go.dev/strings) — `ToUpper` and other functions used in pipeline stages
+- [`fmt`](https://pkg.go.dev/fmt) — formatted output
+- [Language Spec: Function literals](https://go.dev/ref/spec#Function_literals) — closure syntax
+- [Language Spec: Variadic functions](https://go.dev/ref/spec#Passing_arguments_to_..._parameters) — `...Option` variadic parameters
+- [Effective Go: Functions](https://go.dev/doc/effective_go#functions) — first-class functions
+- [Go Blog: Functional options for friendly APIs](https://go.dev/blog/functional-options-for-friendly-apis) — functional options pattern (Dave Cheney)
+- [Go Tour: Closures](https://go.dev/tour/moretypes/25) — interactive closure tour

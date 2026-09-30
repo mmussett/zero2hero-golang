@@ -99,8 +99,8 @@ close(done) // signal all goroutines to stop
 
 Write a program that:
 1. Accepts a directory path from `os.Args[1]`
-2. Walks the directory with `filepath.WalkDir`
-3. Hashes each file concurrently using goroutines and `crypto/sha256`
+2. Walks the directory with [`filepath.WalkDir`](https://pkg.go.dev/path/filepath#WalkDir)
+3. Hashes each file concurrently using goroutines and [`crypto/sha256`](https://pkg.go.dev/crypto/sha256)
 4. Collects results through a channel
 5. Prints each `filename: hash` sorted by filename
 
@@ -111,3 +111,18 @@ sem := make(chan struct{}, runtime.NumCPU())
 ```
 
 **Extension ideas:** add a progress bar using `\r` escape; support MD5/SHA512 via a flag; detect duplicate files by hash.
+
+## Official Documentation
+
+- [`sync`](https://pkg.go.dev/sync) — WaitGroup for goroutine coordination
+- [`runtime`](https://pkg.go.dev/runtime) — `NumCPU()` for worker pool sizing
+- [`path/filepath`](https://pkg.go.dev/path/filepath) — `WalkDir` for directory traversal
+- [`crypto/sha256`](https://pkg.go.dev/crypto/sha256) — SHA-256 file hashing
+- [`os`](https://pkg.go.dev/os) — `os.Args`, file reading
+- [`fmt`](https://pkg.go.dev/fmt) — formatted output
+- [Language Spec: Go statements](https://go.dev/ref/spec#Go_statements) — goroutine launch syntax
+- [Language Spec: Channel types](https://go.dev/ref/spec#Channel_types) — channel declaration and direction
+- [Language Spec: Select statements](https://go.dev/ref/spec#Select_statements) — multi-channel select
+- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency) — goroutines and channels
+- [Go Blog: Go Concurrency Patterns: Pipelines](https://go.dev/blog/pipelines) — fan-out/fan-in patterns
+- [Go Tour: Concurrency](https://go.dev/tour/concurrency/1) — interactive goroutines and channels tour

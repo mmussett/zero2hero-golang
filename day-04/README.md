@@ -63,3 +63,12 @@ Write a program that:
 4. Demonstrates a nil pointer check before dereferencing
 
 Run it and observe the memory addresses printed.
+
+## Official Documentation
+
+- [`fmt`](https://pkg.go.dev/fmt) — the `%p` verb for printing pointer addresses
+- [Language Spec: Pointer types](https://go.dev/ref/spec#Pointer_types) — `*T` pointer syntax
+- [Language Spec: Address operators](https://go.dev/ref/spec#Address_operators) — `&` and `*` operators
+- [Language Spec: Allocation](https://go.dev/ref/spec#Allocation) — the `new` built-in
+- [Effective Go: Pointers vs. Values](https://go.dev/doc/effective_go#pointers_vs_values) — when to use each
+- [Go Tour: Pointers](https://go.dev/tour/moretypes/1) — interactive pointer tour

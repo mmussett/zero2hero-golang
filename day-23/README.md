@@ -90,3 +90,12 @@ Extend the Day 22 notes API to use SQLite instead of the in-memory store:
 Run with: `go run .`
 
 **Extension ideas:** add full-text search with SQLite FTS5; implement cursor-based pagination.
+
+## Official Documentation
+
+- [`database/sql`](https://pkg.go.dev/database/sql) — `Open`, `DB`, `Stmt`, `Row`, `Rows`, `Tx`, `ErrNoRows`, `QueryRow`, `Query`, `Exec`, `Begin`, `Prepare`, context variants (`QueryRowContext`, `ExecContext`)
+- [`errors`](https://pkg.go.dev/errors) — `Is` for checking `sql.ErrNoRows`
+- [`context`](https://pkg.go.dev/context) — `Context`-aware query methods
+- [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) — pure-Go SQLite driver (CGo-free)
+- [Go Blog: Accessing a relational database](https://go.dev/doc/tutorial/database-access) — official database/sql tutorial
+- [Go Blog: Organizing a Go module](https://go.dev/blog/organizing-go-code)

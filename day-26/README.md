@@ -97,3 +97,14 @@ go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
 Run benchmarks with: `go test -bench=. -benchmem`
 
 **Extension ideas:** try `sync.Pool` to reduce allocations; experiment with `bytes.FieldsFunc` to avoid the `strings` package entirely.
+
+## Official Documentation
+
+- [`testing`](https://pkg.go.dev/testing) — `B` (benchmark type), `B.N`, `B.ResetTimer`, `B.RunParallel`, `PB.Next`, `B.ReportAllocs`
+- [`strings`](https://pkg.go.dev/strings) — `Split`, `Fields`, `Builder`, `Repeat` used in benchmark examples
+- [`bufio`](https://pkg.go.dev/bufio) — `Scanner`, `ScanWords` split function for the V3 implementation
+- [`sync`](https://pkg.go.dev/sync) — `Pool` for reducing allocations
+- [`net/http/pprof`](https://pkg.go.dev/net/http/pprof) — registers `/debug/pprof/` handlers on a running server
+- [Go Blog: Profiling Go Programs](https://go.dev/blog/pprof)
+- [Go Blog: Benchmarks](https://go.dev/testing/#hdr-Benchmarks)
+- [`runtime`](https://pkg.go.dev/runtime) — `NumCPU` used in semaphore patterns

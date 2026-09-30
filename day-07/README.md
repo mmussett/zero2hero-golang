@@ -92,4 +92,15 @@ Refactor the word frequency counter from Day 06 into a proper library:
 
 Run tests: `go test ./wordcount/...`
 
-**Extension ideas:** add `io.Reader` support to `Counter` so it can parse any text stream; add `Reset()`.
+**Extension ideas:** add [`io.Reader`](https://pkg.go.dev/io#Reader) support to `Counter` so it can parse any text stream; add `Reset()`.
+
+## Official Documentation
+
+- [`fmt`](https://pkg.go.dev/fmt) — formatted I/O used in the package
+- [`strings`](https://pkg.go.dev/strings) — string manipulation within the wordcount package
+- [`io`](https://pkg.go.dev/io) — `io.Reader` interface for streaming input
+- [Go Modules reference](https://go.dev/doc/modules/gomod-ref) — `go.mod` syntax and directives
+- [Language Spec: Packages](https://go.dev/ref/spec#Packages) — package declarations and imports
+- [Language Spec: Exported identifiers](https://go.dev/ref/spec#Exported_identifiers) — uppercase = exported
+- [Effective Go: Package names](https://go.dev/doc/effective_go#package-names) — naming conventions
+- [Go Blog: Organizing a Go module](https://go.dev/blog/organizing-go-code) — package structure guidance

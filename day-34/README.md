@@ -399,3 +399,18 @@ Also write:
 - A benchmark comparing single-threaded vs parallel download simulation
 
 **Extension ideas:** implement retry with exponential backoff using `sync.Once` to track attempts; add a `Pause`/`Resume` mechanism using a channel toggle.
+
+## Official Documentation
+
+- [`sync`](https://pkg.go.dev/sync) — `Mutex`, `RWMutex`, `WaitGroup`, `Once`, `Cond`, `Map`, `Pool`
+- [`sync/atomic`](https://pkg.go.dev/sync/atomic) — `AddInt64`, `LoadInt64`, `StoreInt64`, `CompareAndSwapInt64`, `Value`
+- [`runtime`](https://pkg.go.dev/runtime) — `GOMAXPROCS`, `NumCPU`, `NumGoroutine`, `Goexit`, `Gosched`
+- [`context`](https://pkg.go.dev/context) — `WithTimeout`, `WithCancel`, `Background`, `Done` for goroutine cancellation
+- [`database/sql`](https://pkg.go.dev/database/sql) — `DB`, `Open` used in `sync.Once` lazy-init example
+- [`errors`](https://pkg.go.dev/errors) — `Join` for aggregating errors from goroutines
+- [`time`](https://pkg.go.dev/time) — `Ticker`, `NewTicker`, `After` for progress reporting and timeout
+- [golang.org/x/sync/errgroup](https://pkg.go.dev/golang.org/x/sync/errgroup) — `WithContext`, `Go`, `Wait` for goroutine error propagation
+- [Go Blog: Share Memory by Communicating](https://go.dev/blog/codelab-share)
+- [Go Blog: Go Concurrency Patterns: Context](https://go.dev/blog/context)
+- [Language Spec — Go statements](https://go.dev/ref/spec#Go_statements) — goroutine semantics
+- [Go Race Detector](https://go.dev/doc/articles/race_detector) — using `-race` in tests and CI

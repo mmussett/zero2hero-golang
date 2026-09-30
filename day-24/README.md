@@ -86,3 +86,13 @@ Refactor the Day 22/23 notes API:
 Run with: `go run .`
 
 **Extension ideas:** add request ID to error responses by reading from context; log internal errors with full stack via `runtime/debug.Stack()`.
+
+## Official Documentation
+
+- [`errors`](https://pkg.go.dev/errors) — `New`, `Is`, `As`, `Join` (Go 1.20+), `Unwrap`
+- [`net/http`](https://pkg.go.dev/net/http) — `StatusNotFound`, `StatusConflict`, `StatusBadRequest`, `StatusInternalServerError`, `Error`
+- [`fmt`](https://pkg.go.dev/fmt) — `Errorf` with `%w` verb for error wrapping
+- [`runtime/debug`](https://pkg.go.dev/runtime/debug) — `Stack` for capturing stack traces in error logs
+- [Go Blog: Error handling and Go](https://go.dev/blog/error-handling-and-go)
+- [Go Blog: Working with Errors in Go 1.13](https://go.dev/blog/go1.13-errors) — `errors.Is`, `errors.As`, `%w` wrapping
+- [Language Spec — Errors](https://go.dev/ref/spec#Errors)

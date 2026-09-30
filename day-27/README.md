@@ -89,3 +89,14 @@ Build a self-contained HTTP server that:
 Run with: `go run .` (prod) or `go run -tags dev .` (dev mode)
 
 **Extension ideas:** add a Makefile that cross-compiles for all three platforms; wire up `goreleaser` to automate releases.
+
+## Official Documentation
+
+- [`embed`](https://pkg.go.dev/embed) — `//go:embed` directive, `FS` type for embedded file trees
+- [`io/fs`](https://pkg.go.dev/io/fs) — `Sub`, `FS` interface used with `embed.FS`
+- [`net/http`](https://pkg.go.dev/net/http) — `FileServer`, `FS`, `StripPrefix`, `Handle` for serving embedded static files
+- [`os`](https://pkg.go.dev/os) — `File`, `Open` for dev-mode disk reads
+- [Go Blog: Using Go Embed](https://go.dev/blog/embed) — official guide to `//go:embed`
+- [Language Spec — Build constraints](https://go.dev/ref/spec) — `//go:build` tag syntax
+- [Go Modules Reference — go generate](https://go.dev/doc/modules/gomod-ref) — `//go:generate` directives
+- [Go Documentation — Build constraints](https://pkg.go.dev/cmd/go#hdr-Build_constraints)

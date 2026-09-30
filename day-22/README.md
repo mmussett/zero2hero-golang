@@ -111,3 +111,14 @@ Each `Note` has: `id`, `text`, `created_at`, `updated_at`. Include integration t
 Run with: `go run .`
 
 **Extension ideas:** add pagination with `?limit=10&offset=0`; add tag filtering.
+
+## Official Documentation
+
+- [`net/http`](https://pkg.go.dev/net/http) — `ResponseWriter`, `Request`, `Handler`, `HandlerFunc`, `ListenAndServe`, `StatusOK`, `StatusNotFound`
+- [`net/http/httptest`](https://pkg.go.dev/net/http/httptest) — `NewServer` for integration testing HTTP handlers
+- [`encoding/json`](https://pkg.go.dev/encoding/json) — `NewEncoder`, `NewDecoder`, `DisallowUnknownFields`
+- [`sync`](https://pkg.go.dev/sync) — `RWMutex` for thread-safe in-memory store
+- [`sync/atomic`](https://pkg.go.dev/sync/atomic) — `AddInt64` for generating sequential IDs
+- [`time`](https://pkg.go.dev/time) — `Time`, `Now` for `created_at` / `updated_at` timestamps
+- [chi router](https://pkg.go.dev/github.com/go-chi/chi/v5) — `NewRouter`, `URLParam`, `Route`, middleware chaining
+- [Go Blog: Writing Web Applications](https://go.dev/doc/articles/wiki)

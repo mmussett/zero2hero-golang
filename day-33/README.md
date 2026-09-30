@@ -417,3 +417,15 @@ Then build a **fan-out + fan-in word counter**:
 4. Print top-10 words
 
 **Extension ideas:** add a `monitor` goroutine that prints throughput (lines/sec) every 100ms using `time.Ticker`; implement a bounded buffer between stages to handle backpressure.
+
+## Official Documentation
+
+- [`sync`](https://pkg.go.dev/sync) — `WaitGroup` used in fan-in/fan-out patterns
+- [`context`](https://pkg.go.dev/context) — `WithTimeout`, `WithCancel`, `Done` for pipeline cancellation
+- [`runtime`](https://pkg.go.dev/runtime) — `NumCPU` for sizing worker pools and semaphores
+- [`strings`](https://pkg.go.dev/strings) — `NewReader` used in the day project pipeline generator
+- [`time`](https://pkg.go.dev/time) — `After`, `NewTicker`, `Ticker` for timeout and throughput monitoring
+- [Go Blog: Go Concurrency Patterns: Pipelines and cancellation](https://go.dev/blog/pipelines) — canonical reference for pipeline, fan-out, fan-in patterns
+- [Go Blog: Go Concurrency Patterns](https://go.dev/blog/concurrency-patterns)
+- [Language Spec — Channel types](https://go.dev/ref/spec#Channel_types)
+- [Language Spec — Select statements](https://go.dev/ref/spec#Select_statements)

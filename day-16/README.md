@@ -2,9 +2,9 @@
 
 ## Core Concept: Shared Memory Requires Explicit Synchronisation
 
-Channels are great for ownership transfer and signalling. When goroutines genuinely need to share mutable state, reach for the `sync` package.
+Channels are great for ownership transfer and signalling. When goroutines genuinely need to share mutable state, reach for the [`sync`](https://pkg.go.dev/sync) package.
 
-## sync.Mutex
+## [sync.Mutex](https://pkg.go.dev/sync#Mutex)
 
 ```go
 type SafeCounter struct {
@@ -27,7 +27,7 @@ func (c *SafeCounter) Value() int {
 
 Always `defer mu.Unlock()` immediately after `Lock()` — even if the function panics, the mutex will be released.
 
-## sync.RWMutex
+## [sync.RWMutex](https://pkg.go.dev/sync#RWMutex)
 
 Allows multiple concurrent readers or one writer — better throughput for read-heavy workloads:
 
@@ -47,7 +47,7 @@ func write() {
 }
 ```
 
-## sync.WaitGroup
+## [sync.WaitGroup](https://pkg.go.dev/sync#WaitGroup)
 
 Wait for a collection of goroutines to finish:
 
@@ -65,7 +65,7 @@ wg.Wait()
 
 Always call `Add` before launching the goroutine, never inside it.
 
-## sync.Once
+## [sync.Once](https://pkg.go.dev/sync#Once)
 
 Run an initialisation exactly once, regardless of how many goroutines call it:
 
@@ -83,7 +83,7 @@ func GetDB() *DB {
 }
 ```
 
-## sync/atomic
+## [sync/atomic](https://pkg.go.dev/sync/atomic)
 
 Low-level, lock-free operations on primitive integers and pointers:
 
@@ -112,9 +112,19 @@ Implement an LRU (Least Recently Used) cache with:
 - `New(capacity int) *LRUCache`
 - `Get(key string) (any, bool)` — O(1), RLock
 - `Put(key string, value any)` — O(1), Lock, evicts LRU entry when full
-- Thread-safe using `sync.RWMutex`
-- A hit/miss counter using `sync/atomic`
+- Thread-safe using [`sync.RWMutex`](https://pkg.go.dev/sync#RWMutex)
+- A hit/miss counter using [`sync/atomic`](https://pkg.go.dev/sync/atomic)
 
-Use `container/list` as the doubly linked list and a `map[string]*list.Element` for O(1) lookup.
+Use [`container/list`](https://pkg.go.dev/container/list) as the doubly linked list and a `map[string]*list.Element` for O(1) lookup.
 
 **Extension ideas:** add a TTL per entry using a `time.Time` in the value; implement `sync.Map`-based variant and benchmark both.
+
+## Official Documentation
+
+- [`sync`](https://pkg.go.dev/sync) — Mutex, RWMutex, WaitGroup, Once, Map
+- [`sync/atomic`](https://pkg.go.dev/sync/atomic) — AddInt64, LoadInt64, and other atomic operations
+- [`container/list`](https://pkg.go.dev/container/list) — doubly linked list for LRU implementation
+- [Language Spec: Go statements](https://go.dev/ref/spec#Go_statements) — goroutine semantics
+- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency) — synchronisation patterns
+- [Go Blog: The Go Memory Model](https://go.dev/ref/mem) — happens-before and synchronisation guarantees
+- [Go Blog: Share Memory by Communicating](https://go.dev/blog/codelab-share) — when to use channels vs mutexes

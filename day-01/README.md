@@ -54,8 +54,8 @@ func main() {
 ```
 
 - `:=` declares and assigns in one step (type is inferred)
-- `fmt.Printf` uses C-style verbs: `%d` int, `%s` string, `%v` any value, `%T` type
-- `fmt.Println` adds a newline automatically
+- [`fmt.Printf`](https://pkg.go.dev/fmt#Printf) uses C-style verbs: `%d` int, `%s` string, `%v` any value, `%T` type
+- [`fmt.Println`](https://pkg.go.dev/fmt#Println) adds a newline automatically
 - Unused imports are a **compile error** — the compiler enforces hygiene
 
 ## Day Project Goal
@@ -63,12 +63,21 @@ func main() {
 Create `day-01/main.go` that:
 1. Declares variables for your name, the day number, and a motivational message using `:=`
 2. Prints a greeting using `fmt.Printf` with at least two format verbs
-3. Prints the Go version using `runtime.Version()`
+3. Prints the Go version using [`runtime.Version()`](https://pkg.go.dev/runtime#Version)
 
 Run with: `go run .`
 
 ## Extension Ideas
 
-- Try `fmt.Sprintf` to build a string before printing it
-- Print `os.Args` to see command-line arguments
+- Try [`fmt.Sprintf`](https://pkg.go.dev/fmt#Sprintf) to build a string before printing it
+- Print [`os.Args`](https://pkg.go.dev/os#pkg-variables) to see command-line arguments
 - Explore what happens when you declare a variable and never use it
+
+## Official Documentation
+
+- [`fmt`](https://pkg.go.dev/fmt) — formatted I/O (Printf, Println, Sprintf)
+- [`runtime`](https://pkg.go.dev/runtime) — runtime information including `Version()`
+- [`os`](https://pkg.go.dev/os) — operating system interface including `Args`
+- [Go Modules reference](https://go.dev/doc/modules/gomod-ref) — `go.mod` file format
+- [Go Tour: Basics](https://go.dev/tour/basics/1) — interactive introduction to Go syntax
+- [Effective Go](https://go.dev/doc/effective_go) — idiomatic Go style guide

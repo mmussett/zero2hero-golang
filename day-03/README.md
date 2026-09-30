@@ -74,7 +74,17 @@ Use a **pointer receiver** when the method mutates state or the struct is large.
 
 Define a `Contact` struct with at least: name, email, phone. Write:
 - A `NewContact(name, email, phone string) (Contact, error)` constructor that validates the email contains `@`
-- A `String() string` method implementing `fmt.Stringer`
+- A `String() string` method implementing [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer)
 - A `func PrintCard(c Contact)` that pretty-prints the card
 
 **Extension ideas:** add a `contacts []Contact` slice and write `FindByName(name string) (Contact, bool)`.
+
+## Official Documentation
+
+- [`fmt`](https://pkg.go.dev/fmt) — Errorf, Sprintf, Stringer interface
+- [`log`](https://pkg.go.dev/log) — Fatal and other logging functions
+- [Language Spec: Function types](https://go.dev/ref/spec#Function_types) — multiple return values
+- [Language Spec: Struct types](https://go.dev/ref/spec#Struct_types) — struct declarations and embedding
+- [Language Spec: Method declarations](https://go.dev/ref/spec#Method_declarations) — value and pointer receivers
+- [Effective Go: Methods](https://go.dev/doc/effective_go#methods) — pointer vs value receivers
+- [Go Tour: Methods and interfaces](https://go.dev/tour/methods/1) — interactive methods tour

@@ -105,4 +105,14 @@ case '/':
 }
 ```
 
-**Extension ideas:** read `a`, `b`, and `op` from `os.Args`; add `%` modulo; use `fmt.Sscanf` to parse a string like `"12.0 / 4.0"`.
+**Extension ideas:** read `a`, `b`, and `op` from [`os.Args`](https://pkg.go.dev/os#pkg-variables); add `%` modulo; use [`fmt.Sscanf`](https://pkg.go.dev/fmt#Sscanf) to parse a string like `"12.0 / 4.0"`.
+
+## Official Documentation
+
+- [`fmt`](https://pkg.go.dev/fmt) — formatted I/O (Printf, Println, Sscanf)
+- [`os`](https://pkg.go.dev/os) — `os.Args` for command-line arguments
+- [Language Spec: Variables](https://go.dev/ref/spec#Variables) — variable declarations
+- [Language Spec: Constants](https://go.dev/ref/spec#Constants) — typed and untyped constants
+- [Language Spec: For statements](https://go.dev/ref/spec#For_statements) — all loop forms
+- [Language Spec: Switch statements](https://go.dev/ref/spec#Switch_statements) — expression and type switches
+- [Go Tour: Flow control](https://go.dev/tour/flowcontrol/1) — interactive control flow tour

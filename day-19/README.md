@@ -100,3 +100,14 @@ Build a config manager that:
 Use custom `MarshalJSON`/`UnmarshalJSON` for a `LogLevel` type (`"debug"` ↔ integer).
 
 **Extension ideas:** support YAML via `gopkg.in/yaml.v3`; add JSON schema validation.
+
+## Official Documentation
+
+- [`encoding/json`](https://pkg.go.dev/encoding/json) — `Marshal`, `Unmarshal`, `NewEncoder`, `NewDecoder`, `RawMessage`, struct tags (`json:"..."`)
+- [`encoding/csv`](https://pkg.go.dev/encoding/csv) — `NewReader`, `NewWriter`, `Reader.ReadAll`, `Writer.Flush`
+- [`os`](https://pkg.go.dev/os) — `Getenv` for environment variable overrides
+- [`io`](https://pkg.go.dev/io) — `EOF`, `Reader` used with streaming decoders
+- [`strings`](https://pkg.go.dev/strings) — `NewReader` used in CSV examples
+- [`time`](https://pkg.go.dev/time) — `Time`, `Duration` used in struct fields and custom marshaling
+- [Go Blog: JSON and Go](https://go.dev/blog/json) — struct tags, streaming, custom marshaling walkthrough
+- [Language Spec — Struct tags](https://go.dev/ref/spec#Struct_types)

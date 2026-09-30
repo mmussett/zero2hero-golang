@@ -85,3 +85,12 @@ Implement:
 - Tests for each
 
 **Extension ideas:** implement a `Set[T comparable]` with `Add`, `Contains`, `Remove`, `Union`, `Intersection`.
+
+## Official Documentation
+
+- [`strings`](https://pkg.go.dev/strings) — `ToUpper` and other functions used in generic examples
+- [Language Spec: Type parameters](https://go.dev/ref/spec#Type_parameter_declarations) — type parameter syntax
+- [Language Spec: Type constraints](https://go.dev/ref/spec#Interface_types) — constraint interfaces
+- [Go Blog: An Introduction to Generics](https://go.dev/blog/intro-generics) — overview of Go generics
+- [Go Blog: When to use generics](https://go.dev/blog/when-generics) — guidance on generics vs interfaces
+- [Go Tour: Generics](https://go.dev/tour/generics/1) — interactive generics tour

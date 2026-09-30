@@ -53,3 +53,15 @@ Before writing code:
 Go's difficulty is front-loaded: the module system, explicit error handling, and concurrency model feel unfamiliar at first. But these constraints prevent entire categories of bugs. Your Go code is honest about what can fail, who owns the data, and where the concurrency lives.
 
 That honesty is the point.
+
+## Official Documentation
+
+- [`crypto/aes`](https://pkg.go.dev/crypto/aes) — AES encryption for the password manager capstone option
+- [`net/http`](https://pkg.go.dev/net/http) — HTTP server and client for web service capstones
+- [`database/sql`](https://pkg.go.dev/database/sql) — SQL database layer for URL shortener and finance tracker
+- [`log/slog`](https://pkg.go.dev/log/slog) — structured logging recommended from day one of any capstone
+- [`text/template`](https://pkg.go.dev/text/template) — template rendering for static site generator capstone
+- [`encoding/json`](https://pkg.go.dev/encoding/json) — JSON serialisation used across all web service capstones
+- [Effective Go](https://go.dev/doc/effective_go) — canonical guide to idiomatic Go
+- [Go Tour](https://go.dev/tour/) — interactive refresher on any concept
+- [Go standard library](https://pkg.go.dev/std) — full index of all standard packages

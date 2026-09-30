@@ -83,3 +83,14 @@ Build a `todo` CLI with `cobra` that:
 - `todo export` — prints tasks as CSV to stdout
 
 **Extension ideas:** add `todo edit <id> "new text"`; add due dates with `--due 2024-12-31`; colour output with `github.com/fatih/color`.
+
+## Official Documentation
+
+- [`flag`](https://pkg.go.dev/flag) — standard library flag parsing (`flag.Int`, `flag.Bool`, `flag.String`, `flag.Parse`, `flag.Args`)
+- [`os`](https://pkg.go.dev/os) — `Stderr`, `Stdin`, `Stdout`, `Exit`
+- [`bufio`](https://pkg.go.dev/bufio) — `NewScanner` for reading from `os.Stdin`
+- [`fmt`](https://pkg.go.dev/fmt) — `Fprintf` for writing to `os.Stderr`
+- [`encoding/json`](https://pkg.go.dev/encoding/json) — for reading and writing `~/.todo.json`
+- [cobra](https://pkg.go.dev/github.com/spf13/cobra) — subcommand CLI framework used in this day
+- [Go Blog: Testable Examples in Go](https://go.dev/blog/examples)
+- [Effective Go — Program initialisation and execution](https://go.dev/doc/effective_go#init)

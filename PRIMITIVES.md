@@ -286,3 +286,23 @@ Every type in Go has a well-defined zero value — there is no uninitialised mem
 | `interface{}` | 2 × pointer size (16 bytes on 64-bit) |
 
 Use `unsafe.Sizeof(v)` to verify at runtime.
+
+---
+
+## Official Documentation
+
+- [Language Spec — Types](https://go.dev/ref/spec#Types) — full specification for all built-in types
+- [Language Spec — Numeric types](https://go.dev/ref/spec#Numeric_types) — integer, float, and complex type definitions
+- [Language Spec — String types](https://go.dev/ref/spec#String_types) — string immutability and UTF-8 encoding
+- [Language Spec — Slice types](https://go.dev/ref/spec#Slice_types) — slice internals (pointer, length, capacity)
+- [Language Spec — Map types](https://go.dev/ref/spec#Map_types) — map semantics and key comparability
+- [Language Spec — Pointer types](https://go.dev/ref/spec#Pointer_types)
+- [`fmt`](https://pkg.go.dev/fmt) — `Sprintf` and format verbs for string formatting
+- [`strings`](https://pkg.go.dev/strings) — `Builder`, `Contains`, `Split`, `Join`, `TrimSpace`, `ToUpper`, `ToLower`
+- [`strconv`](https://pkg.go.dev/strconv) — `Itoa`, `Atoi`, `ParseFloat`, `FormatFloat`
+- [`unicode`](https://pkg.go.dev/unicode) — `IsLetter`, `IsDigit`, `IsSpace` for rune classification
+- [`math`](https://pkg.go.dev/math) — `IsNaN`, `IsInf`, `Abs`, `MaxInt`, `MinInt` constants
+- [`math/bits`](https://pkg.go.dev/math/bits) — `Add64`, `Mul64` for overflow-checked arithmetic
+- [`unsafe`](https://pkg.go.dev/unsafe) — `Sizeof`, `Pointer` (use sparingly)
+- [Go Blog: Strings, bytes, runes and characters in Go](https://go.dev/blog/strings) — essential reading on string/byte/rune distinctions
+- [Effective Go — Names](https://go.dev/doc/effective_go#names)

@@ -109,3 +109,15 @@ srv.Shutdown(ctx)
 - Handles non-200 responses as errors
 
 **Extension ideas:** add an `Authorization: Bearer` middleware; implement request ID injection with context.
+
+## Official Documentation
+
+- [`net/http`](https://pkg.go.dev/net/http) — `HandleFunc`, `HandlerFunc`, `Handler`, `ServeMux`, `Server`, `Client`, `ListenAndServe`, `ResponseWriter`, `Request`, `StatusOK`
+- [`encoding/json`](https://pkg.go.dev/encoding/json) — `NewEncoder`, `NewDecoder` for JSON responses and client decoding
+- [`context`](https://pkg.go.dev/context) — `WithTimeout`, `Background` used in graceful shutdown and client timeouts
+- [`os`](https://pkg.go.dev/os) — `Signal` for graceful shutdown
+- [`log`](https://pkg.go.dev/log) — `Fatal`, `Printf` for server-side logging
+- [`time`](https://pkg.go.dev/time) — `Second`, `Since` for timeouts and latency measurement
+- [Go Blog: HTTP/2 Server Push](https://go.dev/blog/h2push)
+- [Go Blog: The Go net/http Package](https://go.dev/blog/http-tracing)
+- [Language Spec — Method sets](https://go.dev/ref/spec#Method_sets) — how `ServeHTTP` satisfies `http.Handler`

@@ -102,3 +102,13 @@ Parse it into a `map[string]map[string]string` (section → key → value). Hand
 Write the parsed config back to a writer in the same format.
 
 **Extension ideas:** support `${ENV_VAR}` substitution in values using `os.Getenv`; watch the file with a goroutine and reload on change.
+
+## Official Documentation
+
+- [`os`](https://pkg.go.dev/os) — `ReadFile`, `WriteFile`, `Create`, `Open`, `CreateTemp`, `Remove`
+- [`io`](https://pkg.go.dev/io) — `Reader`, `Writer`, `Copy`, `ReadAll`, `MultiReader`, `TeeReader`, `LimitReader`, `Pipe`, `Discard`
+- [`bufio`](https://pkg.go.dev/bufio) — `NewScanner`, `NewWriter`, `Scanner.Scan`, `Writer.Flush`
+- [`path/filepath`](https://pkg.go.dev/path/filepath) — `WalkDir`
+- [`io/fs`](https://pkg.go.dev/io/fs) — `DirEntry`, `FS` interface used by `filepath.WalkDir`
+- [Language Spec — Interfaces](https://go.dev/ref/spec#Interface_types) — `io.Reader` / `io.Writer` interface mechanics
+- [Effective Go — I/O](https://go.dev/doc/effective_go#interfaces_and_types)

@@ -93,3 +93,12 @@ slog.Error(...)  // failures requiring attention
 Run with: `go run .`
 
 **Extension ideas:** implement a custom `slog.Handler` that redacts PII fields; export trace IDs in response headers (`X-Trace-ID`).
+
+## Official Documentation
+
+- [`log/slog`](https://pkg.go.dev/log/slog) — `Logger`, `Handler`, `NewJSONHandler`, `NewTextHandler`, `HandlerOptions`, `SetDefault`, `With`, `Info`, `Error`, `Debug`, `Warn`, `LevelInfo`, `LevelDebug`
+- [`context`](https://pkg.go.dev/context) — `WithValue`, `Value` for injecting per-request loggers
+- [`os`](https://pkg.go.dev/os) — `Stdout`, `Getenv` for output target and log level config
+- [`net/http`](https://pkg.go.dev/net/http) — `Handler`, `ResponseWriter`, `Request` used in middleware
+- [`time`](https://pkg.go.dev/time) — `Now`, `Since` for request duration measurement
+- [Go Blog: Structured Logging with slog](https://go.dev/blog/slog) — official introduction to `log/slog`

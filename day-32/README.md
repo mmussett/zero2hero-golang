@@ -277,3 +277,15 @@ Take the notes API built in Days 22–25 and restructure it into the domain-driv
 8. Verify tests still pass: `go test ./...`
 
 **Extension ideas:** add a second binary `cmd/migrate/main.go` that runs DB migrations standalone; add `internal/platform/logger/` that initialises `slog` with level from config.
+
+## Official Documentation
+
+- [`net/http`](https://pkg.go.dev/net/http) — `Server`, `ListenAndServe`, `Handler` — wired in `cmd/api/main.go`
+- [`log`](https://pkg.go.dev/log) — `Fatal` for startup errors
+- [`log/slog`](https://pkg.go.dev/log/slog) — structured logger initialised in `internal/platform/logger/`
+- [`database/sql`](https://pkg.go.dev/database/sql) — `DB` opened in `internal/platform/database/`
+- [Go Modules Reference — internal packages](https://go.dev/ref/mod#go-mod-file) — compiler enforcement of `internal/` boundaries
+- [Go Blog: Organizing a Go module](https://go.dev/blog/organizing-go-code)
+- [Go Blog: Package names](https://go.dev/blog/package-names) — naming conventions for packages
+- [Language Spec — Package clause](https://go.dev/ref/spec#Package_clause)
+- [cmd/go — internal directories](https://pkg.go.dev/cmd/go#hdr-Internal_Directories) — how the compiler enforces `internal/`

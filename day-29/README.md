@@ -101,3 +101,13 @@ goreleaser release                      # real release (requires GITHUB_TOKEN)
 5. Build and smoke-test the Docker image: `docker build -t notes-api . && docker run -p 8080:8080 notes-api`
 
 **Extension ideas:** publish the shapes package to `pkg.go.dev` (make the repo public and push a tag); set up GitHub Actions to run `goreleaser` automatically on tag push.
+
+## Official Documentation
+
+- [Go Modules Reference](https://go.dev/doc/modules/gomod-ref) — `go.mod` syntax, `module` path, `require` directives
+- [Module version numbering](https://go.dev/doc/modules/version-numbers) — semantic versioning rules for `v0`, `v1`, `v2+`
+- [Publishing a module](https://go.dev/doc/modules/publishing) — how to make a module available on `pkg.go.dev`
+- [`cmd/go` — go install](https://pkg.go.dev/cmd/go#hdr-Compile_and_install_packages_and_dependencies) — installing CLI binaries
+- [`cmd/go` — ldflags](https://pkg.go.dev/cmd/go#hdr-Compile_packages_and_dependencies) — embedding version info with `-ldflags "-X main.version=..."`
+- [`fmt`](https://pkg.go.dev/fmt) — `Printf` for printing version information at startup
+- [goreleaser documentation](https://goreleaser.com/intro/) — cross-platform release automation

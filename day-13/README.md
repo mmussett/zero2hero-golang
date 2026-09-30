@@ -65,7 +65,7 @@ func TestDivide(t *testing.T) {
 }
 ```
 
-`t.Run` creates subtests — run a single subtest with `-run TestDivide/divide_by_zero`.
+[`t.Run`](https://pkg.go.dev/testing#T.Run) creates subtests — run a single subtest with `-run TestDivide/divide_by_zero`.
 
 ## Benchmarks
 
@@ -87,7 +87,7 @@ go test -bench=. -benchmem ./...
 
 ## testify (External)
 
-`github.com/stretchr/testify` provides cleaner assertions:
+[`github.com/stretchr/testify`](https://pkg.go.dev/github.com/stretchr/testify) provides cleaner assertions:
 
 ```go
 import "github.com/stretchr/testify/assert"
@@ -116,3 +116,13 @@ Write comprehensive tests for the functions built in Days 02–12:
 5. At least one benchmark
 
 **Extension ideas:** add a fuzzing test with `go test -fuzz`; measure coverage with `go test -cover`.
+
+## Official Documentation
+
+- [`testing`](https://pkg.go.dev/testing) — T, B, M types; Run, Errorf, Fatalf, ResetTimer, and more
+- [`strings`](https://pkg.go.dev/strings) — `strings.Repeat` used in benchmarks
+- [`os`](https://pkg.go.dev/os) — `os.Exit` in TestMain
+- [Go Blog: Table driven tests](https://go.dev/blog/subtests) — subtests and table-driven patterns
+- [Go Blog: The cover story](https://go.dev/blog/cover) — test coverage tooling
+- [Go Blog: Fuzzing](https://go.dev/blog/fuzz-beta) — fuzzing in Go 1.18+
+- [Effective Go: Testing](https://go.dev/doc/effective_go) — idiomatic test patterns

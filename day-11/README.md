@@ -2,7 +2,7 @@
 
 ## Sorting
 
-Go's `sort` package sorts slices in-place.
+Go's [`sort`](https://pkg.go.dev/sort) package sorts slices in-place.
 
 ```go
 // Concrete helpers
@@ -26,7 +26,7 @@ func (b ByLength) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
 sort.Sort(ByLength(words))
 ```
 
-## container/heap — Priority Queue
+## [container/heap](https://pkg.go.dev/container/heap) — Priority Queue
 
 Implement `heap.Interface` on a slice:
 
@@ -46,7 +46,7 @@ heap.Push(h, 2)
 fmt.Println(heap.Pop(h)) // 1
 ```
 
-## container/list — Doubly Linked List
+## [container/list](https://pkg.go.dev/container/list) — Doubly Linked List
 
 ```go
 l := list.New()
@@ -90,8 +90,17 @@ func (g Graph[T]) BFS(start T) []T {
 ## Day Project: Data Structures Library
 
 Implement and test:
-1. A min-heap priority queue wrapping `container/heap`
-2. An LRU cache using `container/list` + `map` (O(1) get and put)
+1. A min-heap priority queue wrapping [`container/heap`](https://pkg.go.dev/container/heap)
+2. An LRU cache using [`container/list`](https://pkg.go.dev/container/list) + `map` (O(1) get and put)
 3. A generic `Graph[T comparable]` with `AddEdge`, `BFS`, `DFS`, `HasPath`
 
 **Extension ideas:** implement Dijkstra's shortest-path on a weighted graph using `container/heap`.
+
+## Official Documentation
+
+- [`sort`](https://pkg.go.dev/sort) — Ints, Strings, Slice, Sort, SearchInts, sort.Interface
+- [`container/heap`](https://pkg.go.dev/container/heap) — heap.Interface, Init, Push, Pop
+- [`container/list`](https://pkg.go.dev/container/list) — doubly linked list operations
+- [`container/ring`](https://pkg.go.dev/container/ring) — circular list (related container)
+- [`fmt`](https://pkg.go.dev/fmt) — formatted output
+- [Go Blog: The Go Programming Language Specification — Generics](https://go.dev/blog/intro-generics) — for the generic Graph type

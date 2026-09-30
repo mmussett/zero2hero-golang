@@ -52,7 +52,7 @@ for i, r := range s {   // i = byte offset, r = rune
 }
 ```
 
-### Essential `strings` Functions
+### Essential [`strings`](https://pkg.go.dev/strings) Functions
 
 ```go
 strings.Contains(s, "ell")
@@ -78,16 +78,27 @@ for _, word := range words {
 result := b.String()
 ```
 
-Concatenating with `+=` in a loop is O(n²) — always use `strings.Builder` or `strings.Join`.
+Concatenating with `+=` in a loop is O(n²) — always use [`strings.Builder`](https://pkg.go.dev/strings#Builder) or [`strings.Join`](https://pkg.go.dev/strings#Join).
 
 ## Day Project: String Statistics Tool
 
 Write a program that takes a multi-line string (hardcoded) and computes:
 - Total character count (runes)
 - Total byte count
-- Word count (using `strings.Fields`)
+- Word count (using [`strings.Fields`](https://pkg.go.dev/strings#Fields))
 - Line count
 - Longest word
 - Most frequent character (use a `map[rune]int`)
 
 **Extension ideas:** read from `os.Stdin`; add sentence count; produce a frequency bar chart in the terminal.
+
+## Official Documentation
+
+- [`strings`](https://pkg.go.dev/strings) — Contains, Fields, Builder, Join, Split, ToUpper, TrimSpace, and more
+- [`unicode`](https://pkg.go.dev/unicode) — rune classification (IsLetter, IsDigit, etc.)
+- [`fmt`](https://pkg.go.dev/fmt) — formatted I/O with `%c` rune verb
+- [`os`](https://pkg.go.dev/os) — `os.Stdin` for reading standard input
+- [Language Spec: Slice types](https://go.dev/ref/spec#Slice_types) — slice internals
+- [Language Spec: String types](https://go.dev/ref/spec#String_types) — UTF-8 string representation
+- [Go Blog: Strings, bytes, runes and characters](https://go.dev/blog/strings) — deep dive on Go strings
+- [Go Tour: More types](https://go.dev/tour/moretypes/7) — slices and arrays tour

@@ -333,3 +333,18 @@ type Message struct {
 ```
 
 **Extension ideas:** add a `RateLimitedNotifier` using `time.Ticker`; make notifiers configurable via `WithOption` functional options.
+
+## Official Documentation
+
+- [`io`](https://pkg.go.dev/io) — `Reader`, `Writer`, `Closer`, `Seeker`, `ByteReader`, `RuneReader`, `WriterTo`, `ReaderFrom`, `ReadWriter`, `ReadCloser`, `WriteCloser`, `ReadWriteCloser`
+- [`fmt`](https://pkg.go.dev/fmt) — `Stringer`, `GoStringer`, `Formatter` interfaces; `%s`, `%v`, `%#v` verbs
+- [`sort`](https://pkg.go.dev/sort) — `Interface` (Len, Less, Swap) for custom type sorting
+- [`net/http`](https://pkg.go.dev/net/http) — `Handler`, `HandlerFunc` adapter pattern
+- [`bytes`](https://pkg.go.dev/bytes) — `Buffer` used in type assertion examples
+- [`errors`](https://pkg.go.dev/errors) — `Join` for collecting multiple notifier errors
+- [`encoding`](https://pkg.go.dev/encoding) — `TextMarshaler`, `TextUnmarshaler` interfaces
+- [`encoding/json`](https://pkg.go.dev/encoding/json) — `Marshaler`, `Unmarshaler` interfaces
+- [`log/slog`](https://pkg.go.dev/log/slog) — `Logger` used in `LogNotifier` implementation
+- [Go Blog: Go Interfaces (Rob Pike)](https://go.dev/blog/laws-of-reflection)
+- [Effective Go — Interfaces and other types](https://go.dev/doc/effective_go#interfaces_and_types)
+- [Language Spec — Interface types](https://go.dev/ref/spec#Interface_types)

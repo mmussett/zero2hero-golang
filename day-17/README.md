@@ -2,7 +2,7 @@
 
 ## Core Concept: Propagate Cancellation, Not Panics
 
-`context.Context` carries deadlines, cancellation signals, and request-scoped values across API boundaries and goroutines. Pass it as the **first argument** to every function that does I/O or blocks.
+[`context.Context`](https://pkg.go.dev/context#Context) carries deadlines, cancellation signals, and request-scoped values across API boundaries and goroutines. Pass it as the **first argument** to every function that does I/O or blocks.
 
 ```go
 func doWork(ctx context.Context, url string) error {
@@ -79,13 +79,24 @@ func handleConn(ctx context.Context, conn net.Conn) {
 
 Write a program that:
 1. Takes a list of URLs (hardcoded or from `os.Args`)
-2. Downloads each concurrently with `http.NewRequestWithContext`
+2. Downloads each concurrently with [`http.NewRequestWithContext`](https://pkg.go.dev/net/http#NewRequestWithContext)
 3. Cancels all in-flight downloads after a configurable timeout (e.g. 10s)
 4. Reports success, failure, and cancelled downloads separately
 
 Also write a minimal TCP echo server that:
 - Accepts connections
 - Echoes every line back in uppercase
-- Shuts down cleanly when a `context.WithTimeout` expires
+- Shuts down cleanly when a [`context.WithTimeout`](https://pkg.go.dev/context#WithTimeout) expires
 
 **Extension ideas:** implement backpressure by limiting concurrent downloads with a semaphore; add retry with exponential backoff.
+
+## Official Documentation
+
+- [`context`](https://pkg.go.dev/context) — Context, Background, WithCancel, WithTimeout, WithDeadline, WithValue
+- [`net/http`](https://pkg.go.dev/net/http) — NewRequestWithContext, DefaultClient, HTTP methods
+- [`net`](https://pkg.go.dev/net) — Listen, Conn for TCP server
+- [`os`](https://pkg.go.dev/os) — `os.Args` for URL list input
+- [Go Blog: Go Concurrency Patterns: Context](https://go.dev/blog/context) — context usage patterns
+- [Go Blog: Contexts and structs](https://go.dev/blog/context-and-structs) — why context goes in arguments not structs
+- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency) — cancellation and coordination
+- [Go Tour: Concurrency](https://go.dev/tour/concurrency/1) — goroutines and channels foundation

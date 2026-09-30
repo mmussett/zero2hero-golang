@@ -93,3 +93,10 @@ Test with several struct types including nested structs and pointer fields.
 Run with: `go run .`
 
 **Extension ideas:** implement a `Validate` function that checks `required:""` struct tags; build a minimal query builder that maps structs to SQL INSERT/SELECT using `db:""` tags.
+
+## Official Documentation
+
+- [`reflect`](https://pkg.go.dev/reflect) — `TypeOf`, `ValueOf`, `Type`, `Value`, `Kind`, `StructField`, `StructTag.Get`, `Value.CanSet`, `DeepEqual`, `Value.MethodByName`, `Value.Call`
+- [Language Spec — Reflection](https://go.dev/ref/spec#Package_unsafe) — type system foundations underlying reflect
+- [Go Blog: The Laws of Reflection](https://go.dev/blog/laws-of-reflection) — essential reading before using the `reflect` package
+- [Language Spec — Struct tags](https://go.dev/ref/spec#Struct_types) — tag syntax and conventions

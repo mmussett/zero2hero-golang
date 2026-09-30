@@ -288,3 +288,19 @@ Recursive / tree structure?       → struct with pointer fields
 Concurrent access (read-heavy)?   → sync.Map
 Concurrent access (mixed)?        → map + sync.RWMutex
 ```
+
+---
+
+## Official Documentation
+
+- [Language Spec — Slice types](https://go.dev/ref/spec#Slice_types) — slice internals (pointer, length, capacity)
+- [Language Spec — Map types](https://go.dev/ref/spec#Map_types) — map semantics, comparability requirements
+- [`container/heap`](https://pkg.go.dev/container/heap) — `heap.Interface`, `Init`, `Push`, `Pop`
+- [`container/list`](https://pkg.go.dev/container/list) — doubly linked list, `PushBack`, `PushFront`, `Remove`, `Element`
+- [`container/ring`](https://pkg.go.dev/container/ring) — circular buffer, `New`, `Do`, `Len`, `Next`
+- [`sort`](https://pkg.go.dev/sort) — `Slice`, `SliceStable`, `Search`, `SearchInts`, `Ints`, `Strings`, `Interface`
+- [`sync`](https://pkg.go.dev/sync) — `Mutex`, `RWMutex`, `Map` for concurrent access patterns
+- [`strings`](https://pkg.go.dev/strings) — `Fields` used in frequency-count idiom
+- [Go Blog: Slices: usage and internals](https://go.dev/blog/slices-intro)
+- [Go Blog: Go maps in action](https://go.dev/blog/maps)
+- [Effective Go — Data structures](https://go.dev/doc/effective_go#data)

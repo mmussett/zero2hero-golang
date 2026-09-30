@@ -69,19 +69,31 @@ func describe(s Shape) string {
 
 | Interface | Methods | Use |
 |-----------|---------|-----|
-| `fmt.Stringer` | `String() string` | Custom `fmt.Println` output |
+| [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer) | `String() string` | Custom `fmt.Println` output |
 | `error` | `Error() string` | Error values |
-| `io.Reader` | `Read([]byte) (int, error)` | Anything readable |
-| `io.Writer` | `Write([]byte) (int, error)` | Anything writable |
-| `sort.Interface` | `Len`, `Less`, `Swap` | Custom sort |
+| [`io.Reader`](https://pkg.go.dev/io#Reader) | `Read([]byte) (int, error)` | Anything readable |
+| [`io.Writer`](https://pkg.go.dev/io#Writer) | `Write([]byte) (int, error)` | Anything writable |
+| [`sort.Interface`](https://pkg.go.dev/sort#Interface) | `Len`, `Less`, `Swap` | Custom sort |
 
 ## Day Project: Shape Library
 
 Define:
 - `Shape` interface with `Area() float64` and `Perimeter() float64`
 - `Circle`, `Rectangle`, `Triangle` concrete types
-- `fmt.Stringer` on each
+- [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer) on each
 - `TotalArea(shapes []Shape) float64` and `LargestShape(shapes []Shape) Shape`
 - A type switch that prints different messages per shape type
 
 **Extension ideas:** add a `Scale(factor float64) Shape` method; implement `json.Marshaler`.
+
+## Official Documentation
+
+- [`fmt`](https://pkg.go.dev/fmt) — Stringer interface, Printf, Sprintf
+- [`io`](https://pkg.go.dev/io) — Reader and Writer interfaces
+- [`sort`](https://pkg.go.dev/sort) — sort.Interface for custom sorting
+- [`math`](https://pkg.go.dev/math) — `math.Pi` and other constants
+- [Language Spec: Interface types](https://go.dev/ref/spec#Interface_types) — interface declarations
+- [Language Spec: Type assertions](https://go.dev/ref/spec#Type_assertions) — safe type extraction
+- [Language Spec: Type switches](https://go.dev/ref/spec#Type_switches) — dispatch on concrete type
+- [Effective Go: Interfaces](https://go.dev/doc/effective_go#interfaces) — interface design principles
+- [Go Tour: Interfaces](https://go.dev/tour/methods/9) — interactive interfaces tour
