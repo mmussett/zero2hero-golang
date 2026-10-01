@@ -70,7 +70,7 @@ A project-based path from absolute beginner to production-minded Go developer, p
 
 ---
 
-## Bonus Deep-Dive Days (Days 31–34)
+## Advanced Golang Concepts (Days 31–35)
 
 | Day | Topic | Project |
 |-----|-------|---------|
@@ -78,6 +78,7 @@ A project-based path from absolute beginner to production-minded Go developer, p
 | [32](day-32/README.md) | Idiomatic project structure: flat, `cmd/`, `internal/`, domain-driven layout, anti-patterns | Restructure the notes API |
 | [33](day-33/README.md) | Channel model: pipelines, fan-out/in, done channels, `select`, direction types, common mistakes | Channel-based text pipeline + word counter |
 | [34](day-34/README.md) | Goroutines & sync: `Mutex`, `RWMutex`, `WaitGroup`, `Once`, `atomic`, `sync.Map`, `errgroup`, deadlocks | Concurrent download manager |
+| [35](day-35/README.md) | Context deep dive: tree propagation, values, middleware, DB ops, leak detection, testing patterns | Request-scoped pipeline |
 
 ---
 

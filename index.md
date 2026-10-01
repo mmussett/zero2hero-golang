@@ -14,7 +14,7 @@ A self-paced, project-based 34-day curriculum moving from absolute beginner to p
 | [Week 2 — Core Language](#week-2--core-language) | 8–14 | Interfaces, errors, generics, closures, testing |
 | [Week 3 — Intermediate](#week-3--intermediate) | 15–21 | Goroutines, channels, context, file I/O, JSON, CLI, HTTP |
 | [Week 4 — Production](#week-4--production) | 22–30 | REST APIs, databases, observability, benchmarking, deployment |
-| [Bonus Deep Dives](#bonus-deep-dives) | 31–34 | Interfaces, project structure, channels, goroutines & sync |
+| [Advanced Golang Concepts](#advanced-golang-concepts) | 31–35 | Interfaces, project structure, channels, goroutines & sync, context |
 
 → [Full curriculum overview](/zero2hero-golang/CURRICULUM/)
 
@@ -64,14 +64,15 @@ A self-paced, project-based 34-day curriculum moving from absolute beginner to p
 
 ---
 
-## Bonus Deep Dives
+## Advanced Golang Concepts
 
-Four additional days covering topics that deserve more space than the main curriculum allows.
+Five deep-dive days covering topics that deserve more space than the main curriculum allows.
 
 - [Day 31: Go Interfaces — The Complete Picture](/zero2hero-golang/day-31/)
 - [Day 32: Idiomatic Go Project Structure](/zero2hero-golang/day-32/)
 - [Day 33: The Go Channel Model](/zero2hero-golang/day-33/)
 - [Day 34: Goroutines, Concurrency & Synchronisation](/zero2hero-golang/day-34/)
+- [Day 35: The Go Context Model — Deep Dive](/zero2hero-golang/day-35/)
 
 ---
 
