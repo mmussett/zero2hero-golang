@@ -1,84 +1,94 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"strings"
+	"math"
 )
 
-var ErrEmptyField = errors.New("empty required field")
-
-type ParseError struct {
-	Row    int
-	Col    int
-	Field  string
-	Reason string
+type Shape interface {
+	Area() float64
+	Perimeter() float64
 }
 
-func (e *ParseError) Error() string {
-	return fmt.Sprintf("parse error at row %d, col %d (field %q): %s", e.Row, e.Col, e.Field, e.Reason)
+// Circle
+type Circle struct{ Radius float64 }
+
+func (c Circle) Area() float64      { return math.Pi * c.Radius * c.Radius }
+func (c Circle) Perimeter() float64 { return 2 * math.Pi * c.Radius }
+func (c Circle) String() string     { return fmt.Sprintf("Circle(r=%.2f)", c.Radius) }
+
+// Rectangle
+type Rectangle struct{ Width, Height float64 }
+
+func (r Rectangle) Area() float64      { return r.Width * r.Height }
+func (r Rectangle) Perimeter() float64 { return 2 * (r.Width + r.Height) }
+func (r Rectangle) String() string     { return fmt.Sprintf("Rectangle(%.2fx%.2f)", r.Width, r.Height) }
+
+// Triangle (using Heron's formula)
+type Triangle struct{ A, B, C float64 }
+
+func (t Triangle) Perimeter() float64 { return t.A + t.B + t.C }
+func (t Triangle) Area() float64 {
+	s := t.Perimeter() / 2
+	return math.Sqrt(s * (s - t.A) * (s - t.B) * (s - t.C))
+}
+func (t Triangle) String() string {
+	return fmt.Sprintf("Triangle(%.2f,%.2f,%.2f)", t.A, t.B, t.C)
 }
 
-func (e *ParseError) Unwrap() error {
-	if e.Reason == "empty required field" {
-		return ErrEmptyField
+func TotalArea(shapes []Shape) float64 {
+	var total float64
+	for _, s := range shapes {
+		total += s.Area()
 	}
-	return nil
+	return total
 }
 
-func parseRow(line string, lineNum int) ([]string, error) {
-	fields := strings.Split(line, ",")
-	required := []string{"name", "email", "age"}
-
-	if len(fields) != len(required) {
-		return nil, &ParseError{
-			Row:    lineNum,
-			Col:    0,
-			Field:  "row",
-			Reason: fmt.Sprintf("expected %d fields, got %d", len(required), len(fields)),
+func LargestShape(shapes []Shape) Shape {
+	if len(shapes) == 0 {
+		return nil
+	}
+	largest := shapes[0]
+	for _, s := range shapes[1:] {
+		if s.Area() > largest.Area() {
+			largest = s
 		}
 	}
+	return largest
+}
 
-	result := make([]string, len(fields))
-	for i, f := range fields {
-		f = strings.TrimSpace(f)
-		if f == "" {
-			return nil, &ParseError{
-				Row:    lineNum,
-				Col:    i + 1,
-				Field:  required[i],
-				Reason: "empty required field",
-			}
+func describe(s Shape) string {
+	switch v := s.(type) {
+	case Circle:
+		return fmt.Sprintf("a circle with radius %.2f", v.Radius)
+	case Rectangle:
+		if v.Width == v.Height {
+			return "a square rectangle"
 		}
-		result[i] = f
+		return "a rectangular rectangle"
+	case Triangle:
+		return fmt.Sprintf("a triangle with sides %.2f, %.2f, %.2f", v.A, v.B, v.C)
+	default:
+		return "unknown shape"
 	}
-	return result, nil
 }
 
 func main() {
-	csvData := []string{
-		"Alice,alice@example.com,30",
-		"Bob,bob@example.com,25",
-		",,",
-		"Carol,carol@example.com",
-		"Dave,,40",
+	shapes := []Shape{
+		Circle{Radius: 5},
+		Rectangle{Width: 4, Height: 6},
+		Triangle{A: 3, B: 4, C: 5},
+		Circle{Radius: 2},
+		Rectangle{Width: 8, Height: 8},
 	}
 
-	for i, line := range csvData {
-		fields, err := parseRow(line, i+1)
-		if err != nil {
-			fmt.Printf("Row %d error: %v\n", i+1, err)
-
-			if errors.Is(err, ErrEmptyField) {
-				fmt.Printf("  → caused by: empty required field\n")
-			}
-
-			var pe *ParseError
-			if errors.As(err, &pe) {
-				fmt.Printf("  → at column %d, field %q\n", pe.Col, pe.Field)
-			}
-			continue
-		}
-		fmt.Printf("Row %d OK: name=%q email=%q age=%q\n", i+1, fields[0], fields[1], fields[2])
+	fmt.Printf("%-35s %10s %12s\n", "Shape", "Area", "Perimeter")
+	fmt.Println("─────────────────────────────────────────────────────")
+	for _, s := range shapes {
+		fmt.Printf("%-35s %10.2f %12.2f\n", s, s.Area(), s.Perimeter())
 	}
+
+	fmt.Printf("\nTotal area:    %.2f\n", TotalArea(shapes))
+	largest := LargestShape(shapes)
+	fmt.Printf("Largest shape: %s (it's %s)\n", largest, describe(largest))
 }

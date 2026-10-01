@@ -1,109 +1,114 @@
 package main
 
 import (
-	"container/list"
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"sync"
-	"sync/atomic"
 )
 
-type cacheEntry struct {
-	key string
-	val any
+type FileHash struct {
+	Path string
+	Hash string
+	Err  error
 }
 
-type LRUCache struct {
-	mu     sync.RWMutex
-	cap    int
-	list   *list.List
-	items  map[string]*list.Element
-	hits   atomic.Int64
-	misses atomic.Int64
-}
-
-func NewLRUCache(cap int) *LRUCache {
-	return &LRUCache{
-		cap:   cap,
-		list:  list.New(),
-		items: make(map[string]*list.Element),
+func hashFile(path string) FileHash {
+	f, err := os.Open(path)
+	if err != nil {
+		return FileHash{Path: path, Err: err}
 	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return FileHash{Path: path, Err: err}
+	}
+	return FileHash{Path: path, Hash: fmt.Sprintf("%x", h.Sum(nil))}
 }
 
-func (c *LRUCache) Get(key string) (any, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if el, ok := c.items[key]; ok {
-		c.list.MoveToFront(el)
-		c.hits.Add(1)
-		return el.Value.(*cacheEntry).val, true
-	}
-	c.misses.Add(1)
-	return nil, false
-}
-
-func (c *LRUCache) Put(key string, val any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if el, ok := c.items[key]; ok {
-		c.list.MoveToFront(el)
-		el.Value.(*cacheEntry).val = val
-		return
-	}
-	if c.list.Len() == c.cap {
-		back := c.list.Back()
-		if back != nil {
-			c.list.Remove(back)
-			delete(c.items, back.Value.(*cacheEntry).key)
+func hashDir(dir string) ([]FileHash, error) {
+	var paths []string
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if !d.IsDir() {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	el := c.list.PushFront(&cacheEntry{key, val})
-	c.items[key] = el
-}
 
-func (c *LRUCache) Stats() (hits, misses int64) {
-	return c.hits.Load(), c.misses.Load()
-}
+	sem := make(chan struct{}, runtime.NumCPU())
+	results := make(chan FileHash, len(paths))
+	var wg sync.WaitGroup
 
-func (c *LRUCache) Len() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.list.Len()
+	for _, p := range paths {
+		wg.Add(1)
+		go func(path string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results <- hashFile(path)
+		}(p)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var hashes []FileHash
+	for h := range results {
+		hashes = append(hashes, h)
+	}
+	sort.Slice(hashes, func(i, j int) bool {
+		return hashes[i].Path < hashes[j].Path
+	})
+	return hashes, nil
 }
 
 func main() {
-	cache := NewLRUCache(3)
+	dir, err := os.MkdirTemp("", "day15-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(dir)
 
-	ops := []struct {
-		op  string
-		key string
-		val any
-	}{
-		{"put", "a", "apple"},
-		{"put", "b", "banana"},
-		{"put", "c", "cherry"},
-		{"get", "a", nil},          // hit — a moves to front
-		{"put", "d", "date"},       // evicts b (LRU)
-		{"get", "b", nil},          // miss — b was evicted
-		{"get", "c", nil},          // hit
-		{"put", "e", "elderberry"}, // evicts a (LRU)
-		{"get", "a", nil},          // miss
+	files := map[string]string{
+		"hello.txt":  "Hello, Go!",
+		"world.txt":  "Hello, World!",
+		"readme.md":  "# Zero to Hero: Go",
+		"config.txt": "host=localhost\nport=8080",
+	}
+	for name, content := range files {
+		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 	}
 
-	for _, op := range ops {
-		switch op.op {
-		case "put":
-			cache.Put(op.key, op.val)
-			fmt.Printf("PUT %-4q = %-12v (size=%d)\n", op.key, op.val, cache.Len())
-		case "get":
-			if v, ok := cache.Get(op.key); ok {
-				fmt.Printf("GET %-4q → %-12v (hit)\n", op.key, v)
-			} else {
-				fmt.Printf("GET %-4q → (miss)\n", op.key)
-			}
+	fmt.Printf("Hashing files in %s using %d workers...\n\n", dir, runtime.NumCPU())
+
+	hashes, err := hashDir(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%-20s  %s\n", "File", "SHA-256 (first 16 hex chars)")
+	fmt.Println("────────────────────────────────────────────────────────────")
+	for _, h := range hashes {
+		name := filepath.Base(h.Path)
+		if h.Err != nil {
+			fmt.Printf("%-20s  ERROR: %v\n", name, h.Err)
+		} else {
+			fmt.Printf("%-20s  %s...\n", name, h.Hash[:16])
 		}
 	}
-
-	hits, misses := cache.Stats()
-	fmt.Printf("\nStats: %d hits, %d misses (%.0f%% hit rate)\n",
-		hits, misses, float64(hits)/float64(hits+misses)*100)
 }

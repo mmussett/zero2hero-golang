@@ -1,498 +1,420 @@
-# Day 15: Goroutines and Channels
+# Day 15: Standard Library Interfaces
 
-## Core Concept: Communicating Sequential Processes
+## Core Concept: Small Interfaces Compose Well
 
-Go's concurrency is based on CSP: goroutines are lightweight independently-executing functions; channels are typed conduits for communication between them.
+Go's philosophy: "the bigger the interface, the weaker the abstraction." Most standard library interfaces have one or two methods. Implement them and your type works everywhere.
 
-> "Do not communicate by sharing memory; share memory by communicating."
-
-## Goroutines
-
-A goroutine is started with the `go` keyword. It is not a thread — the Go runtime multiplexes thousands of goroutines onto a small number of OS threads.
+## [io.Reader](https://pkg.go.dev/io#Reader) and [io.Writer](https://pkg.go.dev/io#Writer)
 
 ```go
-go func() {
-    fmt.Println("running concurrently")
-}()
-// main does not wait — need to synchronise
-```
-
-## Channels
-
-```go
-ch := make(chan int)      // unbuffered — sender blocks until receiver is ready
-ch := make(chan int, 10)  // buffered — sender blocks only when full
-
-ch <- 42          // send
-v := <-ch         // receive
-v, ok := <-ch     // ok is false when channel is closed and empty
-close(ch)         // signal no more values
-```
-
-`range` over a channel receives until closed:
-
-```go
-for v := range ch {
-    fmt.Println(v)
+type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+type Writer interface {
+    Write(p []byte) (n int, err error)
 }
 ```
 
-## select
-
-`select` waits on multiple channel operations — like a switch for channels:
+`Read` fills `p` and returns how many bytes were written. It returns [`io.EOF`](https://pkg.go.dev/io#EOF) when done — not an error, a signal.
 
 ```go
-select {
-case msg := <-ch1:
-    fmt.Println("ch1:", msg)
-case msg := <-ch2:
-    fmt.Println("ch2:", msg)
-case <-time.After(1 * time.Second):
-    fmt.Println("timeout")
+// Anything that reads can be passed to io.Copy
+io.Copy(os.Stdout, strings.NewReader("hello"))
+
+// Compose readers
+r := io.MultiReader(strings.NewReader("first"), strings.NewReader("second"))
+
+// Wrap a writer for buffering
+w := bufio.NewWriter(os.Stdout)
+defer w.Flush()
+```
+
+## [fmt.Stringer](https://pkg.go.dev/fmt#Stringer)
+
+```go
+type Stringer interface {
+    String() string
 }
 ```
 
-## Fan-Out / Fan-In
+Implement `String()` and `fmt.Println`, `fmt.Sprintf("%v")`, etc. will call it automatically.
+
+## [sort.Interface](https://pkg.go.dev/sort#Interface)
 
 ```go
-// Fan-out: distribute work across N workers
-func fanOut(in <-chan string, n int) []<-chan string {
-    outs := make([]<-chan string, n)
-    for i := range outs {
-        outs[i] = worker(in)
-    }
-    return outs
-}
-
-// Fan-in: merge multiple channels into one
-func merge(channels ...<-chan string) <-chan string {
-    out := make(chan string)
-    var wg sync.WaitGroup
-    for _, ch := range channels {
-        wg.Add(1)
-        go func(c <-chan string) {
-            defer wg.Done()
-            for v := range c { out <- v }
-        }(ch)
-    }
-    go func() { wg.Wait(); close(out) }()
-    return out
+type Interface interface {
+    Len() int
+    Less(i, j int) bool
+    Swap(i, j int)
 }
 ```
 
-## Done Channel (Cancellation)
+Implement it and call `sort.Sort(yourSlice)`. Use [`sort.Reverse`](https://pkg.go.dev/sort#Reverse) for descending order without re-implementing.
+
+## encoding.TextMarshaler / TextUnmarshaler
 
 ```go
-done := make(chan struct{})
-go func() {
-    select {
-    case <-done:
-        return
-    case result := <-work:
-        process(result)
-    }
-}()
-close(done) // signal all goroutines to stop
+type TextMarshaler interface {
+    MarshalText() ([]byte, error)
+}
+type TextUnmarshaler interface {
+    UnmarshalText(text []byte) error
+}
+```
+
+Types that implement these are automatically handled by `encoding/json`, `encoding/xml`, and `fmt`.
+
+## Struct Embedding to Satisfy Interfaces
+
+```go
+type LoggingWriter struct {
+    io.Writer            // embed — promotes Write method
+    prefix string
+}
+
+func (lw *LoggingWriter) Write(p []byte) (int, error) {
+    fmt.Printf("[%s] %s", lw.prefix, p)
+    return lw.Writer.Write(p)  // delegate to embedded writer
+}
 ```
 
 ## Labs
 
-### Lab 1: First Goroutine — sync.WaitGroup
+### Lab 1: io.Reader — ROT13Reader
 
-**What you'll practise:** Launching goroutines and using `sync.WaitGroup` to wait for them all.
-
-**Task:**
-Launch 5 goroutines, each printing its number. First observe the non-deterministic output without synchronisation. Then add a `sync.WaitGroup` so `main` waits for all goroutines to finish.
-
-**Steps:**
-1. Launch 5 goroutines in a loop without any waiting — run it several times and notice the order changes (or goroutines may not print at all if main exits first)
-2. Add `var wg sync.WaitGroup`, call `wg.Add(1)` before each `go`, `defer wg.Done()` inside, and `wg.Wait()` in main
-3. Run again — all 5 numbers appear every time, order may still vary
-
-```go
-var wg sync.WaitGroup
-for i := 0; i < 5; i++ {
-    wg.Add(1)
-    go func(n int) {
-        defer wg.Done()
-        fmt.Printf("goroutine %d running\n", n)
-    }(i)
-}
-wg.Wait()
-fmt.Println("all done")
-```
-
-**Expected output (order varies):**
-```
-goroutine 3 running
-goroutine 0 running
-goroutine 4 running
-goroutine 1 running
-goroutine 2 running
-all done
-```
-
-**Checkpoint:** Every run prints all 5 goroutine lines before "all done".
-
----
-
-### Lab 2: Unbuffered Channel — Synchronous Handshake
-
-**What you'll practise:** Sending and receiving on an unbuffered channel to observe blocking behaviour.
+**What you'll practise:** Implementing `io.Reader` by wrapping another Reader.
 
 **Task:**
-Create an unbuffered `chan int`. Launch a producer goroutine that sends 1..10. In main, receive and print each value. Add `fmt.Println` before and after the send to see that the producer blocks until main is ready.
+Implement a `ROT13Reader` struct that wraps an `io.Reader` and transforms each byte by applying the ROT13 cipher (rotate alphabetic characters by 13). Test it using `strings.NewReader` as the source.
 
 **Steps:**
-1. Create `ch := make(chan int)` (no second argument)
-2. Launch a goroutine that sends `1..10` then closes the channel
-3. In main, receive with `v := <-ch` in a loop
-4. Add log lines around the send to visualise the blocking handshake
+1. Define `type ROT13Reader struct { r io.Reader }`
+2. Implement `Read(p []byte) (int, error)` — call `r.Read`, then rotate each byte in-place
+3. Test by reading `"Hello, World!"` through the ROT13Reader and printing the result
+4. Run it a second time through another ROT13Reader — confirm you get the original string back
 
 ```go
-ch := make(chan int)
-go func() {
-    for i := 1; i <= 10; i++ {
-        fmt.Printf("sending %d\n", i)
-        ch <- i
-        fmt.Printf("sent %d\n", i)
-    }
-    close(ch)
-}()
-for v := range ch {
-    fmt.Printf("received %d\n", v)
-}
-```
+type ROT13Reader struct{ r io.Reader }
 
-**Expected output:**
-```
-sending 1
-received 1
-sent 1
-sending 2
-received 2
-...
-```
-
-**Checkpoint:** "sending N" and "received N" always appear together — the sender never races ahead.
-
----
-
-### Lab 3: Buffered Channel — Producer Runs Ahead
-
-**What you'll practise:** Understanding how buffer capacity decouples sender and receiver timing.
-
-**Task:**
-Change the channel from Lab 2 to `make(chan int, 5)`. Observe that the producer can send up to 5 values before blocking. Add a `time.Sleep` in the receiver to exaggerate the effect.
-
-**Steps:**
-1. Change to `ch := make(chan int, 5)`
-2. Add `time.Sleep(100 * time.Millisecond)` in the receiver loop
-3. Run and observe the producer fires off 5 sends rapidly, then blocks waiting for room
-4. Remove the sleep and compare the timing
-
-```go
-ch := make(chan int, 5)
-go func() {
-    for i := 1; i <= 10; i++ {
-        ch <- i
-        fmt.Printf("queued %d\n", i)
-    }
-    close(ch)
-}()
-for v := range ch {
-    time.Sleep(100 * time.Millisecond)
-    fmt.Printf("processed %d\n", v)
-}
-```
-
-**Expected output:**
-```
-queued 1
-queued 2
-queued 3
-queued 4
-queued 5
-processed 1
-queued 6
-processed 2
-...
-```
-
-**Checkpoint:** The first 5 "queued" lines appear before the first "processed" line.
-
----
-
-### Lab 4: Range over Channel — Clean Producer/Consumer
-
-**What you'll practise:** Using `close(ch)` and `for v := range ch` for a clean, panic-free consumer.
-
-**Task:**
-Write a `generate(nums ...int) <-chan int` function that sends numbers on a channel and closes it when done. In main, consume with `for v := range ch`. Show that ranging over a closed channel terminates naturally.
-
-**Steps:**
-1. `generate` returns a receive-only `<-chan int`
-2. Inside `generate`, launch a goroutine that sends each number then calls `close(ch)`
-3. In main: `for v := range generate(1, 2, 3, 4, 5) { fmt.Println(v) }`
-4. Demonstrate that no sentinel value or separate done channel is needed
-
-```go
-func generate(nums ...int) <-chan int {
-    ch := make(chan int)
-    go func() {
-        for _, n := range nums {
-            ch <- n
-        }
-        close(ch)
-    }()
-    return ch
-}
-
-func main() {
-    for v := range generate(1, 2, 3, 4, 5) {
-        fmt.Println(v)
-    }
-}
-```
-
-**Expected output:**
-```
-1
-2
-3
-4
-5
-```
-
-**Checkpoint:** No goroutine leaks — the producer goroutine exits after `close(ch)`.
-
----
-
-### Lab 5: Select — Multiplexing Channels with Timeout
-
-**What you'll practise:** Using `select` to multiplex two channels and handle timeouts.
-
-**Task:**
-Create two ticker channels firing at different rates (200ms and 500ms). Use `select` in a loop to print which fired. After 2 seconds, use `time.After` in the `select` to break out of the loop.
-
-**Steps:**
-1. Create `fast := time.NewTicker(200 * time.Millisecond)` and `slow := time.NewTicker(500 * time.Millisecond)`
-2. Add `timeout := time.After(2 * time.Second)`
-3. `select` on all three channels; on timeout, `return` or `break`
-4. Add a `default` case, observe it spins; remove `default`, observe it blocks cleanly
-
-```go
-fast := time.NewTicker(200 * time.Millisecond)
-slow := time.NewTicker(500 * time.Millisecond)
-timeout := time.After(2 * time.Second)
-
-for {
-    select {
-    case t := <-fast.C:
-        fmt.Println("fast tick at", t.Format("15:04:05.000"))
-    case t := <-slow.C:
-        fmt.Println("slow tick at", t.Format("15:04:05.000"))
-    case <-timeout:
-        fmt.Println("done")
-        return
-    }
-}
-```
-
-**Expected output:**
-```
-fast tick at 00:00:00.200
-fast tick at 00:00:00.400
-slow tick at 00:00:00.500
-fast tick at 00:00:00.600
-...
-done
-```
-
-**Checkpoint:** The loop exits at approximately 2 seconds and prints roughly 10 fast ticks and 4 slow ticks.
-
----
-
-### Lab 6: Done Channel Pattern — Graceful Shutdown
-
-**What you'll practise:** Using a `done chan struct{}` to signal goroutines to stop.
-
-**Task:**
-Start a worker goroutine that processes items in an infinite loop, printing each item. After 1 second, close the `done` channel and verify the worker exits cleanly — no goroutine leak.
-
-**Steps:**
-1. Create `done := make(chan struct{})` and `jobs := make(chan int, 10)`
-2. Launch a worker that `select`s on `jobs` and `done`
-3. Send 5 jobs, sleep 1 second, then `close(done)`
-4. Use a `sync.WaitGroup` to confirm the worker exited
-
-```go
-done := make(chan struct{})
-jobs := make(chan int, 10)
-var wg sync.WaitGroup
-
-wg.Add(1)
-go func() {
-    defer wg.Done()
-    for {
-        select {
-        case <-done:
-            fmt.Println("worker shutting down")
-            return
-        case j := <-jobs:
-            fmt.Printf("processing job %d\n", j)
+func (rr ROT13Reader) Read(p []byte) (int, error) {
+    n, err := rr.r.Read(p)
+    for i := 0; i < n; i++ {
+        b := p[i]
+        switch {
+        case b >= 'A' && b <= 'Z':
+            p[i] = 'A' + (b-'A'+13)%26
+        case b >= 'a' && b <= 'z':
+            p[i] = 'a' + (b-'a'+13)%26
         }
     }
-}()
-
-for i := 1; i <= 5; i++ { jobs <- i }
-time.Sleep(time.Second)
-close(done)
-wg.Wait()
-fmt.Println("clean exit")
+    return n, err
+}
 ```
 
 **Expected output:**
 ```
-processing job 1
-...
-processing job 5
-worker shutting down
-clean exit
+Uryyb, Jbeyq!
+Hello, World!
 ```
 
-**Checkpoint:** `wg.Wait()` returns and "clean exit" prints — no goroutine remains.
+**Checkpoint:** `io.ReadAll` on your ROT13Reader returns the correctly rotated bytes.
 
 ---
 
-### Lab 7: Fan-Out — Distribute Work Across N Workers
+### Lab 2: io.Writer — CountingWriter
 
-**What you'll practise:** The fan-out pattern: one jobs channel consumed by multiple workers.
-
-**Task:**
-Create a `jobs` channel and `results` channel. Launch N=4 worker goroutines that each read from `jobs`, square the number, and send to `results`. Send 20 jobs, collect all results, and print them.
-
-**Steps:**
-1. Create `jobs := make(chan int, 20)` and `results := make(chan int, 20)`
-2. Launch 4 workers, each reading from `jobs` and writing to `results`
-3. Send integers 1..20 on `jobs`, then `close(jobs)`
-4. Use `sync.WaitGroup` to close `results` after all workers finish
-5. Collect and print all results
-
-```go
-const numWorkers = 4
-jobs := make(chan int, 20)
-results := make(chan int, 20)
-
-var wg sync.WaitGroup
-for w := 0; w < numWorkers; w++ {
-    wg.Add(1)
-    go func() {
-        defer wg.Done()
-        for j := range jobs {
-            results <- j * j
-        }
-    }()
-}
-
-for i := 1; i <= 20; i++ { jobs <- i }
-close(jobs)
-
-go func() { wg.Wait(); close(results) }()
-
-for r := range results {
-    fmt.Println(r)
-}
-```
-
-**Expected output (order varies):**
-```
-1
-4
-9
-...
-400
-```
-
-**Checkpoint:** All 20 squared values appear in the output (in any order). The program exits cleanly.
-
----
-
-### Final Lab (Project): Parallel File Hasher
-
-**What you'll practise:** Applying goroutines, channels, `sync.WaitGroup`, and a semaphore pattern to a real concurrent program.
+**What you'll practise:** Implementing `io.Writer` as a transparent wrapper that counts bytes.
 
 **Task:**
-Write a program that walks a directory and hashes every file concurrently using SHA-256, collecting results through a channel and printing them sorted by filename.
+Implement a `CountingWriter` that wraps any `io.Writer` and keeps a running total of bytes written. Use `fmt.Fprintf` to write formatted output through it and verify the byte count.
 
 **Steps:**
-1. Accept a directory path from `os.Args[1]`
-2. Walk with `filepath.WalkDir`, skip directories
-3. Use a semaphore (`make(chan struct{}, N)`) to cap concurrency at `runtime.NumCPU()` workers
-4. Launch a goroutine per file: acquire semaphore, hash with `crypto/sha256`, release semaphore, send result on channel
-5. Use `sync.WaitGroup` to close the results channel after all goroutines finish
-6. Collect results into a slice, sort by filename, print `filename: hexhash`
+1. Define `type CountingWriter struct { w io.Writer; n int64 }`
+2. Implement `Write(p []byte) (int, error)` — delegate to `w`, add `len(p)` to `n`
+3. Write several strings through it using `fmt.Fprintf`
+4. Assert the final count matches the sum of all written string lengths
 
 ```go
-sem := make(chan struct{}, runtime.NumCPU())
+type CountingWriter struct {
+    w io.Writer
+    n int64
+}
 
-var wg sync.WaitGroup
-results := make(chan result)
+func (cw *CountingWriter) Write(p []byte) (int, error) {
+    n, err := cw.w.Write(p)
+    cw.n += int64(n)
+    return n, err
+}
 
-go func() { wg.Wait(); close(results) }()
-
-filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-    if err != nil || d.IsDir() { return err }
-    wg.Add(1)
-    go func() {
-        defer wg.Done()
-        sem <- struct{}{}
-        defer func() { <-sem }()
-        data, _ := os.ReadFile(path)
-        results <- result{path, fmt.Sprintf("%x", sha256.Sum256(data))}
-    }()
-    return nil
-})
+func (cw *CountingWriter) BytesWritten() int64 { return cw.n }
 ```
 
 **Expected output:**
 ```
-day-15/main.go: 3b4c9f...
-day-15/README.md: a1f203...
+Hello, Go!
+Bytes written: 10
 ```
 
-**Checkpoint:** Output contains one line per file in the directory, sorted alphabetically by path, with no goroutine leak (program exits cleanly).
+**Checkpoint:** `cw.BytesWritten()` equals `len("Hello, Go!\n")` after the `fmt.Fprintf` call.
 
 ---
 
-## Day Project: Parallel File Hasher
+### Lab 3: io.ReadWriter — Custom TeeWriter
 
-Write a program that:
-1. Accepts a directory path from `os.Args[1]`
-2. Walks the directory with [`filepath.WalkDir`](https://pkg.go.dev/path/filepath#WalkDir)
-3. Hashes each file concurrently using goroutines and [`crypto/sha256`](https://pkg.go.dev/crypto/sha256)
-4. Collects results through a channel
-5. Prints each `filename: hash` sorted by filename
+**What you'll practise:** Writing to two destinations simultaneously by composing `io.Writer`.
 
-Use a semaphore (buffered channel) to limit concurrency to N workers.
+**Task:**
+Implement a `TeeWriter` that writes to two `io.Writer` destinations at once (similar to `io.MultiWriter` but built from scratch). If the first write succeeds but the second fails, return the error from the second.
+
+**Steps:**
+1. Define `type TeeWriter struct { a, b io.Writer }`
+2. Implement `Write` — write to `a`, then to `b`, return the first error encountered
+3. Use it to write to both `os.Stdout` and a `bytes.Buffer` simultaneously
+4. Verify that the buffer contains the same bytes that appeared on stdout
 
 ```go
-sem := make(chan struct{}, runtime.NumCPU())
+type TeeWriter struct{ a, b io.Writer }
+
+func (tw *TeeWriter) Write(p []byte) (int, error) {
+    n, err := tw.a.Write(p)
+    if err != nil {
+        return n, err
+    }
+    _, err = tw.b.Write(p)
+    return n, err
+}
 ```
 
-**Extension ideas:** add a progress bar using `\r` escape; support MD5/SHA512 via a flag; detect duplicate files by hash.
+**Expected output:**
+```
+stdout: Hello from TeeWriter
+buffer: Hello from TeeWriter
+```
+
+**Checkpoint:** `buf.String()` equals the string sent to the `TeeWriter`.
+
+---
+
+### Lab 4: fmt.Stringer and sort.Interface — Temperature
+
+**What you'll practise:** Implementing two stdlib interfaces on a custom type to make it printable and sortable.
+
+**Task:**
+Define a `Temperature` type (wrapping `float64`). Implement `String() string` so `fmt.Println` formats it as `"23.5°C"`. Then implement `sort.Interface` on `[]Temperature` and sort a slice in ascending order.
+
+**Steps:**
+1. Define `type Temperature float64`
+2. Implement `String()` using `fmt.Sprintf("%.1f°C", float64(t))`
+3. Define `type ByTemp []Temperature` and implement `Len`, `Less`, `Swap`
+4. Sort a slice and print it before and after sorting
+
+```go
+type Temperature float64
+
+func (t Temperature) String() string {
+    return fmt.Sprintf("%.1f°C", float64(t))
+}
+
+type ByTemp []Temperature
+
+func (b ByTemp) Len() int           { return len(b) }
+func (b ByTemp) Less(i, j int) bool { return b[i] < b[j] }
+func (b ByTemp) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
+```
+
+**Expected output:**
+```
+Before: [36.6°C 0.0°C 100.0°C -40.0°C]
+After:  [-40.0°C 0.0°C 36.6°C 100.0°C]
+```
+
+**Checkpoint:** `fmt.Println(temps[0])` prints with the `°C` suffix, and `sort.Sort(ByTemp(temps))` orders them numerically.
+
+---
+
+### Lab 5: encoding.TextMarshaler/TextUnmarshaler — Config
+
+**What you'll practise:** Implementing the text codec interfaces so a struct round-trips through a `key=value` text format.
+
+**Task:**
+Define a `Config` struct with `Host string`, `Port int`, and `Debug bool` fields. Implement `MarshalText` to produce a `key=value\n` format and `UnmarshalText` to parse it back. Verify the round-trip.
+
+**Steps:**
+1. Implement `MarshalText() ([]byte, error)` using `fmt.Sprintf` for each field
+2. Implement `UnmarshalText(text []byte) error` using `bufio.Scanner` and `strings.Cut`
+3. Marshal a Config, print the text, then unmarshal it into a second Config
+4. Assert both Configs are equal
+
+```go
+func (c Config) MarshalText() ([]byte, error) {
+    return []byte(fmt.Sprintf("host=%s\nport=%d\ndebug=%v\n",
+        c.Host, c.Port, c.Debug)), nil
+}
+
+func (c *Config) UnmarshalText(text []byte) error {
+    scanner := bufio.NewScanner(bytes.NewReader(text))
+    for scanner.Scan() {
+        key, val, _ := strings.Cut(scanner.Text(), "=")
+        // set fields by key...
+    }
+    return scanner.Err()
+}
+```
+
+**Expected output:**
+```
+Marshalled:
+host=localhost
+port=8080
+debug=true
+
+Round-trip equal: true
+```
+
+**Checkpoint:** The unmarshalled Config has the same field values as the original.
+
+---
+
+### Lab 6: io.Closer — Logging Close Wrapper
+
+**What you'll practise:** Implementing `io.Closer` and using `defer` for guaranteed resource release.
+
+**Task:**
+Create a `LoggingFile` struct that wraps `*os.File`. Override `Close()` to log a message before delegating. Open a real file, write to it, and use `defer lf.Close()` to close it — confirm the log message appears even when an error occurs.
+
+**Steps:**
+1. Define `type LoggingFile struct { f *os.File; name string }`
+2. Forward `Write` to `f.Write`
+3. Implement `Close() error` — log `"closing <name>"`, then call `f.Close()`
+4. Open a temp file, write a line, defer Close, return from the function — observe the log
+
+```go
+type LoggingFile struct {
+    f    *os.File
+    name string
+}
+
+func (lf *LoggingFile) Write(p []byte) (int, error) { return lf.f.Write(p) }
+
+func (lf *LoggingFile) Close() error {
+    fmt.Printf("closing %s\n", lf.name)
+    return lf.f.Close()
+}
+```
+
+**Expected output:**
+```
+wrote 12 bytes
+closing /tmp/demo123.txt
+```
+
+**Checkpoint:** The "closing" log line appears before the program exits, even if you add an early `return`.
+
+---
+
+### Lab 7: Compose Stdlib Interfaces — LimitedLogger
+
+**What you'll practise:** Composing multiple stdlib interfaces into a single type.
+
+**Task:**
+Build a `LimitedLogger` that wraps an `io.Writer` and implements `io.Writer` itself. It enforces a maximum byte budget: once the budget is exhausted it returns `0, ErrBudgetExhausted` instead of writing. Use it as the output for a `log.Logger`.
+
+**Steps:**
+1. Define `type LimitedLogger struct { w io.Writer; budget int64; written int64 }`
+2. Implement `Write(p []byte) (int, error)` — check remaining budget, truncate or reject
+3. Pass it to `log.New(ll, "PREFIX: ", 0)` and write enough log entries to hit the limit
+4. Confirm that writes beyond the budget return the custom error
+
+```go
+var ErrBudgetExhausted = errors.New("log budget exhausted")
+
+func (ll *LimitedLogger) Write(p []byte) (int, error) {
+    remaining := ll.budget - ll.written
+    if remaining <= 0 {
+        return 0, ErrBudgetExhausted
+    }
+    if int64(len(p)) > remaining {
+        p = p[:remaining]
+    }
+    n, err := ll.w.Write(p)
+    ll.written += int64(n)
+    return n, err
+}
+```
+
+**Expected output:**
+```
+PREFIX: message 1
+PREFIX: message 2
+PREFIX: messag  <- truncated at budget
+write error: log budget exhausted
+```
+
+**Checkpoint:** `ll.written` equals the budget limit after the budget is exceeded, and further writes return `ErrBudgetExhausted`.
+
+---
+
+### Final Lab (Project): Interface Showcase
+
+**What you'll practise:** Combining all stdlib interfaces — `io.Reader`, `io.Writer`, `fmt.Stringer`, `sort.Interface`, `encoding.TextMarshaler/TextUnmarshaler` — into a coherent program.
+
+**Task:**
+Build a program that demonstrates all four interface implementations working together.
+
+**Steps:**
+1. Implement `CountingReader` wrapping `io.Reader` — counts bytes read
+2. Implement `TeeWriter` writing to two `io.Writer`s simultaneously
+3. Implement `Temperature` with `fmt.Stringer` and `sort.Interface` on `[]Temperature`
+4. Implement `Config` with `encoding.TextMarshaler` and `TextUnmarshaler`
+5. Compose: read from a file through `CountingReader`, write to both stdout and a buffer via `TeeWriter`, sort a temperature slice, and round-trip a Config
+
+```go
+// Wire them together in main:
+cr := &CountingReader{r: file}
+tw := &TeeWriter{a: os.Stdout, b: &buf}
+io.Copy(tw, cr)
+fmt.Printf("read %d bytes\n", cr.N)
+
+sort.Sort(ByTemp(temps))
+fmt.Println(temps)
+
+text, _ := cfg.MarshalText()
+var cfg2 Config
+cfg2.UnmarshalText(text)
+```
+
+**Expected output:**
+```
+[file contents appear on stdout and in buffer]
+read 42 bytes
+[-40.0°C 0.0°C 36.6°C 100.0°C]
+round-trip ok: true
+```
+
+**Checkpoint:** All four components run without error and the `CountingReader` count matches the actual file size.
+
+---
+
+## Day Project: Interface Showcase
+
+Implement:
+1. A `CountingReader` that wraps [`io.Reader`](https://pkg.go.dev/io#Reader) and counts bytes read
+2. A `TeeWriter` that writes to two [`io.Writer`](https://pkg.go.dev/io#Writer)s simultaneously
+3. A `Temperature` type with [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer), [`sort.Interface`](https://pkg.go.dev/sort#Interface) on `[]Temperature`
+4. A `Config` struct that implements `encoding.TextMarshaler` and `TextUnmarshaler`
+
+Compose them: read from a file, count bytes, write to both stdout and a buffer.
+
+**Extension ideas:** implement [`io.WriterTo`](https://pkg.go.dev/io#WriterTo) and [`io.ReaderFrom`](https://pkg.go.dev/io#ReaderFrom) on your types for direct copy optimisation.
 
 ## Official Documentation
 
-- [`sync`](https://pkg.go.dev/sync) — WaitGroup for goroutine coordination
-- [`runtime`](https://pkg.go.dev/runtime) — `NumCPU()` for worker pool sizing
-- [`path/filepath`](https://pkg.go.dev/path/filepath) — `WalkDir` for directory traversal
-- [`crypto/sha256`](https://pkg.go.dev/crypto/sha256) — SHA-256 file hashing
-- [`os`](https://pkg.go.dev/os) — `os.Args`, file reading
-- [`fmt`](https://pkg.go.dev/fmt) — formatted output
-- [Language Spec: Go statements](https://go.dev/ref/spec#Go_statements) — goroutine launch syntax
-- [Language Spec: Channel types](https://go.dev/ref/spec#Channel_types) — channel declaration and direction
-- [Language Spec: Select statements](https://go.dev/ref/spec#Select_statements) — multi-channel select
-- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency) — goroutines and channels
-- [Go Blog: Go Concurrency Patterns: Pipelines](https://go.dev/blog/pipelines) — fan-out/fan-in patterns
-- [Go Tour: Concurrency](https://go.dev/tour/concurrency/1) — interactive goroutines and channels tour
+- [`io`](https://pkg.go.dev/io) — Reader, Writer, EOF, Copy, MultiReader, WriterTo, ReaderFrom
+- [`bufio`](https://pkg.go.dev/bufio) — buffered I/O wrappers (NewWriter, Flush)
+- [`fmt`](https://pkg.go.dev/fmt) — Stringer interface, Printf, Sprintf
+- [`sort`](https://pkg.go.dev/sort) — sort.Interface, Sort, Reverse
+- [`strings`](https://pkg.go.dev/strings) — NewReader for in-memory string reading
+- [`os`](https://pkg.go.dev/os) — Stdout, file I/O
+- [Language Spec: Interface types](https://go.dev/ref/spec#Interface_types) — composing interfaces
+- [Effective Go: Interfaces and other types](https://go.dev/doc/effective_go#interfaces_and_types) — interface design
+- [Go Blog: Laws of Reflection](https://go.dev/blog/laws-of-reflection) — how interfaces work under the hood

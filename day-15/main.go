@@ -1,114 +1,97 @@
 package main
 
 import (
-	"crypto/sha256"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"runtime"
 	"sort"
-	"sync"
+	"strings"
 )
 
-type FileHash struct {
-	Path string
-	Hash string
-	Err  error
+// CountingReader wraps io.Reader and counts bytes read.
+type CountingReader struct {
+	r     io.Reader
+	count int64
 }
 
-func hashFile(path string) FileHash {
-	f, err := os.Open(path)
-	if err != nil {
-		return FileHash{Path: path, Err: err}
-	}
-	defer f.Close()
+func NewCountingReader(r io.Reader) *CountingReader { return &CountingReader{r: r} }
 
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return FileHash{Path: path, Err: err}
-	}
-	return FileHash{Path: path, Hash: fmt.Sprintf("%x", h.Sum(nil))}
+func (c *CountingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.count += int64(n)
+	return n, err
 }
 
-func hashDir(dir string) ([]FileHash, error) {
-	var paths []string
-	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
-			paths = append(paths, path)
-		}
-		return nil
-	})
+func (c *CountingReader) BytesRead() int64 { return c.count }
+
+// TeeWriter writes every Write call to two writers simultaneously.
+type TeeWriter struct {
+	a, b io.Writer
+}
+
+func NewTeeWriter(a, b io.Writer) *TeeWriter { return &TeeWriter{a, b} }
+
+func (t *TeeWriter) Write(p []byte) (int, error) {
+	n, err := t.a.Write(p)
 	if err != nil {
-		return nil, err
+		return n, err
 	}
+	_, err = t.b.Write(p)
+	return n, err
+}
 
-	sem := make(chan struct{}, runtime.NumCPU())
-	results := make(chan FileHash, len(paths))
-	var wg sync.WaitGroup
+// Temperature implements fmt.Stringer.
+type Temperature float64
 
-	for _, p := range paths {
-		wg.Add(1)
-		go func(path string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			results <- hashFile(path)
-		}(p)
-	}
+func (t Temperature) String() string { return fmt.Sprintf("%.1f°C", float64(t)) }
 
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+// Temperatures implements sort.Interface.
+type Temperatures []Temperature
 
-	var hashes []FileHash
-	for h := range results {
-		hashes = append(hashes, h)
-	}
-	sort.Slice(hashes, func(i, j int) bool {
-		return hashes[i].Path < hashes[j].Path
-	})
-	return hashes, nil
+func (t Temperatures) Len() int           { return len(t) }
+func (t Temperatures) Less(i, j int) bool { return t[i] < t[j] }
+func (t Temperatures) Swap(i, j int)      { t[i], t[j] = t[j], t[i] }
+
+// Config implements encoding.TextMarshaler / TextUnmarshaler.
+type Config struct {
+	Host  string
+	Port  int
+	Debug bool
+}
+
+func (c Config) MarshalText() ([]byte, error) {
+	return []byte(fmt.Sprintf("%s:%d:debug=%v", c.Host, c.Port, c.Debug)), nil
+}
+
+func (c *Config) UnmarshalText(text []byte) error {
+	_, err := fmt.Sscanf(string(text), "%s", &c.Host)
+	return err
 }
 
 func main() {
-	dir, err := os.MkdirTemp("", "day15-*")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer os.RemoveAll(dir)
+	fmt.Println("=== CountingReader ===")
+	src := strings.NewReader("Hello, Go interfaces!")
+	cr := NewCountingReader(src)
+	io.Copy(os.Stdout, cr)
+	fmt.Printf("\nBytes read: %d\n\n", cr.BytesRead())
 
-	files := map[string]string{
-		"hello.txt":  "Hello, Go!",
-		"world.txt":  "Hello, World!",
-		"readme.md":  "# Zero to Hero: Go",
-		"config.txt": "host=localhost\nport=8080",
-	}
-	for name, content := range files {
-		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
-	}
+	fmt.Println("=== TeeWriter ===")
+	var buf bytes.Buffer
+	tw := NewTeeWriter(os.Stdout, &buf)
+	fmt.Fprintln(tw, "written to stdout AND buffer")
+	fmt.Printf("Buffer contains: %q\n\n", buf.String())
 
-	fmt.Printf("Hashing files in %s using %d workers...\n\n", dir, runtime.NumCPU())
+	fmt.Println("=== Temperature Sort ===")
+	temps := Temperatures{23.5, 17.2, 31.0, 8.4, 25.1}
+	fmt.Printf("Before:   %v\n", temps)
+	sort.Sort(temps)
+	fmt.Printf("Asc:      %v\n", temps)
+	sort.Sort(sort.Reverse(temps))
+	fmt.Printf("Desc:     %v\n\n", temps)
 
-	hashes, err := hashDir(dir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("%-20s  %s\n", "File", "SHA-256 (first 16 hex chars)")
-	fmt.Println("────────────────────────────────────────────────────────────")
-	for _, h := range hashes {
-		name := filepath.Base(h.Path)
-		if h.Err != nil {
-			fmt.Printf("%-20s  ERROR: %v\n", name, h.Err)
-		} else {
-			fmt.Printf("%-20s  %s...\n", name, h.Hash[:16])
-		}
-	}
+	fmt.Println("=== Config TextMarshaler ===")
+	cfg := Config{Host: "localhost", Port: 8080, Debug: true}
+	b, _ := cfg.MarshalText()
+	fmt.Printf("Marshalled: %s\n", b)
 }

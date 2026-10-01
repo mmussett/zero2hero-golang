@@ -1,399 +1,379 @@
-# Day 09: Error Handling
+# Day 09: Interfaces
 
-## Core Concept: Errors Are Values
+## Core Concept: Implicit Satisfaction
 
-Go's `error` is a plain interface:
+In Go, a type satisfies an interface simply by implementing all its methods — no `implements` keyword, no explicit declaration. This is called **duck typing** or **structural typing**.
 
 ```go
-type error interface {
-    Error() string
+type Shape interface {
+    Area() float64
+    Perimeter() float64
+}
+
+type Circle struct{ Radius float64 }
+func (c Circle) Area() float64      { return math.Pi * c.Radius * c.Radius }
+func (c Circle) Perimeter() float64 { return 2 * math.Pi * c.Radius }
+
+// Circle satisfies Shape automatically
+var s Shape = Circle{Radius: 5}
+fmt.Printf("Area: %.2f\n", s.Area())
+```
+
+## Interface Composition
+
+Interfaces can embed other interfaces:
+
+```go
+type ReadWriter interface {
+    io.Reader
+    io.Writer
 }
 ```
 
-Errors are returned as regular values — there is no exception mechanism. Handle every error at the call site.
+## The Empty Interface: `any`
 
-## Creating Errors
+`any` (alias for `interface{}`) accepts a value of any type. Use it sparingly — it bypasses type safety.
 
 ```go
-errors.New("something went wrong")                         // simple
-fmt.Errorf("parse failed at line %d: %w", line, err)      // with context and wrapping
+func Print(v any) { fmt.Printf("%v (%T)\n", v, v) }
 ```
 
-The `%w` verb **wraps** an error — [`errors.Is`](https://pkg.go.dev/errors#Is) and [`errors.As`](https://pkg.go.dev/errors#As) can unwrap the chain.
+## Type Assertions
 
-## Sentinel Errors
-
-Package-level error variables that callers check by identity:
+Extract the underlying concrete type from an interface:
 
 ```go
-var (
-    ErrNotFound   = errors.New("not found")
-    ErrPermission = errors.New("permission denied")
-)
+var s Shape = Circle{Radius: 3}
 
-if errors.Is(err, ErrNotFound) { /* ... */ }
+c, ok := s.(Circle)     // safe — ok is false if wrong type
+if ok { fmt.Println(c.Radius) }
+
+c2 := s.(Circle)        // panics if s is not a Circle
 ```
 
-## Custom Error Types
+## Type Switches
 
-Carry structured data in an error:
+Dispatch on multiple concrete types:
 
 ```go
-type ParseError struct {
-    Line   int
-    Column int
-    Msg    string
-}
-
-func (e *ParseError) Error() string {
-    return fmt.Sprintf("line %d col %d: %s", e.Line, e.Column, e.Msg)
-}
-
-// Retrieve with errors.As:
-var pe *ParseError
-if errors.As(err, &pe) {
-    fmt.Printf("error at line %d\n", pe.Line)
+func describe(s Shape) string {
+    switch v := s.(type) {
+    case Circle:    return fmt.Sprintf("Circle r=%.1f", v.Radius)
+    case Rectangle: return fmt.Sprintf("Rect %gx%g", v.Width, v.Height)
+    default:        return "unknown shape"
+    }
 }
 ```
 
-## Error Wrapping Chain
+## Common Standard-Library Interfaces
 
-```go
-raw := errors.New("connection refused")
-layer1 := fmt.Errorf("dial failed: %w", raw)
-layer2 := fmt.Errorf("startup: %w", layer1)
-
-errors.Is(layer2, raw)     // true — unwraps the chain
-errors.Unwrap(layer2)      // layer1
-```
-
-## The [`errors`](https://pkg.go.dev/errors) Package
-
-| Function | Purpose |
-|----------|---------|
-| [`errors.New(text)`](https://pkg.go.dev/errors#New) | Create a simple error |
-| [`errors.Is(err, target)`](https://pkg.go.dev/errors#Is) | Identity check through wrapping chain |
-| [`errors.As(err, &target)`](https://pkg.go.dev/errors#As) | Type check through wrapping chain |
-| [`errors.Unwrap(err)`](https://pkg.go.dev/errors#Unwrap) | One level of unwrapping |
+| Interface | Methods | Use |
+|-----------|---------|-----|
+| [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer) | `String() string` | Custom `fmt.Println` output |
+| `error` | `Error() string` | Error values |
+| [`io.Reader`](https://pkg.go.dev/io#Reader) | `Read([]byte) (int, error)` | Anything readable |
+| [`io.Writer`](https://pkg.go.dev/io#Writer) | `Write([]byte) (int, error)` | Anything writable |
+| [`sort.Interface`](https://pkg.go.dev/sort#Interface) | `Len`, `Less`, `Swap` | Custom sort |
 
 ## Labs
 
-### Lab 1: Sentinel Errors
+### Lab 1: Define `Shape` and Three Concrete Types
 
-**What you'll practise:** defining package-level sentinel errors and checking them with `errors.Is`.
+**What you'll practise:** declaring an interface and satisfying it implicitly with multiple concrete types.
 
 **Task:**
-Define `ErrNotFound` and `ErrInvalidInput` sentinel errors. Write functions that return them and demonstrate `errors.Is` checking at the call site.
+Define a `Shape` interface with `Area() float64` and `Perimeter() float64`. Implement `Circle`, `Rectangle`, and `Triangle` structs that satisfy it, plus `fmt.Stringer` on each.
 
 **Steps:**
-1. Declare `var ErrNotFound = errors.New("not found")` and `var ErrInvalidInput = errors.New("invalid input")`
-2. Write `findUser(id int) (string, error)` that returns `ErrNotFound` when `id <= 0`
-3. Write `validateAge(age int) error` that returns `ErrInvalidInput` when `age < 0 || age > 150`
-4. In `main`, call both functions and use `errors.Is` to branch on the specific error
+1. Declare `type Shape interface { Area() float64; Perimeter() float64 }`
+2. Define `Circle{Radius float64}`, `Rectangle{Width, Height float64}`, `Triangle{A, B, C float64}` (sides)
+3. Implement `Area()` and `Perimeter()` for each — use `math.Pi` and Heron's formula for Triangle
+4. Implement `String() string` on each so `fmt.Println` produces a readable description
+5. In `main`, assign each to a `Shape` variable and print `Area()` and `Perimeter()`
 
 ```go
-var (
-    ErrNotFound     = errors.New("not found")
-    ErrInvalidInput = errors.New("invalid input")
-)
+import "math"
 
-func findUser(id int) (string, error) {
-    if id <= 0 {
-        return "", ErrNotFound
-    }
-    return fmt.Sprintf("user-%d", id), nil
+type Shape interface {
+    Area() float64
+    Perimeter() float64
 }
 
-func validateAge(age int) error {
-    if age < 0 || age > 150 {
-        return ErrInvalidInput
-    }
-    return nil
-}
+type Circle struct{ Radius float64 }
 
-// In main:
-if errors.Is(err, ErrNotFound) {
-    fmt.Println("user does not exist")
-}
+func (c Circle) Area() float64      { return math.Pi * c.Radius * c.Radius }
+func (c Circle) Perimeter() float64 { return 2 * math.Pi * c.Radius }
+func (c Circle) String() string     { return fmt.Sprintf("Circle(r=%.2f)", c.Radius) }
+
+type Rectangle struct{ Width, Height float64 }
+
+func (r Rectangle) Area() float64      { return r.Width * r.Height }
+func (r Rectangle) Perimeter() float64 { return 2 * (r.Width + r.Height) }
+func (r Rectangle) String() string     { return fmt.Sprintf("Rect(%.2fx%.2f)", r.Width, r.Height) }
 ```
 
 **Expected output:**
 ```
-findUser(-1): not found
-validateAge(200): invalid input
-findUser(42): user-42
+Circle(r=5.00)  area=78.54  perimeter=31.42
+Rect(3.00x4.00) area=12.00  perimeter=14.00
 ```
 
-**Checkpoint:** `errors.Is(err, ErrNotFound)` returns true for errors returned by `findUser` with a non-positive id.
+**Checkpoint:** All three types compile; assigning any of them to a `Shape` variable works without a cast.
 
 ---
 
-### Lab 2: Custom Error Type with `errors.As`
+### Lab 2: `TotalArea` and `LargestShape`
 
-**What you'll practise:** implementing the `error` interface on a struct and extracting fields with `errors.As`.
-
-**Task:**
-Define `ParseError{Line int, Col int, Msg string}` implementing `error`. Write a parser function that returns it. Use `errors.As` to extract the line number at the call site.
-
-**Steps:**
-1. Define `type ParseError struct { Line, Col int; Msg string }`
-2. Implement `func (e *ParseError) Error() string` returning `"line N col C: Msg"`
-3. Write `parseToken(s string, line, col int) error` returning `&ParseError` for invalid input
-4. At the call site, use `errors.As(err, &pe)` and print `pe.Line`
-
-```go
-type ParseError struct {
-    Line int
-    Col  int
-    Msg  string
-}
-
-func (e *ParseError) Error() string {
-    return fmt.Sprintf("line %d col %d: %s", e.Line, e.Col, e.Msg)
-}
-
-func parseToken(s string, line, col int) error {
-    if s == "" {
-        return &ParseError{Line: line, Col: col, Msg: "empty token"}
-    }
-    return nil
-}
-
-// At call site:
-var pe *ParseError
-if errors.As(err, &pe) {
-    fmt.Printf("parse failed at line %d\n", pe.Line)
-}
-```
-
-**Expected output:**
-```
-line 3 col 7: empty token
-parse failed at line 3
-```
-
-**Checkpoint:** `errors.As` successfully extracts the `*ParseError` and its `Line` field is accessible.
-
----
-
-### Lab 3: Error Wrapping with `%w`
-
-**What you'll practise:** wrapping errors with `fmt.Errorf("%w", err)` and verifying `errors.Is` works through the chain.
+**What you'll practise:** writing functions that accept interface slices, demonstrating runtime polymorphism.
 
 **Task:**
-Simulate a layered system: a low-level `readDB` error gets wrapped by `fetchRecord` and then by `handleRequest`. Show that `errors.Is` and `errors.Unwrap` work at every level.
+Write `TotalArea(shapes []Shape) float64` and `LargestShape(shapes []Shape) Shape` using only the `Shape` interface — no type assertions.
 
 **Steps:**
-1. Define a sentinel `ErrConnection = errors.New("connection refused")`
-2. Write `readDB() error` returning `ErrConnection`
-3. Write `fetchRecord(id int) error` wrapping with `fmt.Errorf("fetchRecord %d: %w", id, err)`
-4. Write `handleRequest(id int) error` wrapping again
-5. Call `handleRequest` and verify `errors.Is(err, ErrConnection)` is `true` at the top level
+1. Implement `TotalArea` by ranging over the slice and summing `s.Area()`
+2. Implement `LargestShape` by tracking the shape with the maximum area; return `nil` for an empty slice
+3. Create a mixed `[]Shape{Circle{5}, Rectangle{3,4}, Triangle{3,4,5}}` in main
+4. Print the total area and the string representation of the largest shape
 
 ```go
-var ErrConnection = errors.New("connection refused")
-
-func readDB() error { return ErrConnection }
-
-func fetchRecord(id int) error {
-    if err := readDB(); err != nil {
-        return fmt.Errorf("fetchRecord %d: %w", id, err)
+func TotalArea(shapes []Shape) float64 {
+    total := 0.0
+    for _, s := range shapes {
+        total += s.Area()
     }
-    return nil
+    return total
 }
 
-func handleRequest(id int) error {
-    if err := fetchRecord(id); err != nil {
-        return fmt.Errorf("handleRequest: %w", err)
+func LargestShape(shapes []Shape) Shape {
+    if len(shapes) == 0 {
+        return nil
     }
-    return nil
-}
-```
-
-**Expected output:**
-```
-err: handleRequest: fetchRecord 42: connection refused
-errors.Is(ErrConnection): true
-Unwrap once: fetchRecord 42: connection refused
-```
-
-**Checkpoint:** `errors.Is(err, ErrConnection)` is `true` even though the error has been wrapped twice.
-
----
-
-### Lab 4: `errors.Join` — Collecting Multiple Errors
-
-**What you'll practise:** accumulating multiple independent errors and combining them with `errors.Join` (Go 1.20+).
-
-**Task:**
-Write a `validateUser` function that checks name, email, and age independently. Collect all validation failures with `errors.Join` so callers see every problem at once.
-
-**Steps:**
-1. Write three validators: `validateName`, `validateEmail`, `validateAge` each returning an error or nil
-2. In `validateUser`, call all three, collect non-nil errors into a slice
-3. Use `errors.Join(errs...)` to return a combined error
-4. Print the combined error and verify `errors.Is` works for individual sentinels through the join
-
-```go
-var (
-    ErrBadName  = errors.New("name required")
-    ErrBadEmail = errors.New("invalid email")
-    ErrBadAge   = errors.New("age out of range")
-)
-
-func validateUser(name, email string, age int) error {
-    var errs []error
-    if name == "" {
-        errs = append(errs, ErrBadName)
-    }
-    if !strings.Contains(email, "@") {
-        errs = append(errs, ErrBadEmail)
-    }
-    if age < 0 || age > 150 {
-        errs = append(errs, ErrBadAge)
-    }
-    return errors.Join(errs...)
-}
-```
-
-**Expected output:**
-```
-name required
-invalid email
-age out of range
-errors.Is(ErrBadName): true
-```
-
-**Checkpoint:** `errors.Join` returns nil when all validators pass. `errors.Is` finds individual sentinels inside the joined error.
-
----
-
-### Lab 5: Panic and Recover — `safeDiv`
-
-**What you'll practise:** converting a panic into a returned error using `recover` inside a deferred function.
-
-**Task:**
-Write `safeDiv(a, b int) (result int, err error)` that recovers from integer division-by-zero panics and returns an `ErrDivisionByZero` error instead.
-
-**Steps:**
-1. Define `var ErrDivisionByZero = errors.New("division by zero")`
-2. In `safeDiv`, use a named return and a deferred function that calls `recover()`
-3. If `recover()` returns a non-nil value, set `err = ErrDivisionByZero`
-4. Perform `a / b` in the function body; call `safeDiv(10, 0)` and `safeDiv(10, 2)` in main
-
-```go
-var ErrDivisionByZero = errors.New("division by zero")
-
-func safeDiv(a, b int) (result int, err error) {
-    defer func() {
-        if r := recover(); r != nil {
-            err = ErrDivisionByZero
-        }
-    }()
-    return a / b, nil
-}
-```
-
-**Expected output:**
-```
-10 / 2 = 5, err=<nil>
-10 / 0 = 0, err=division by zero
-```
-
-**Checkpoint:** `safeDiv(10, 0)` returns `0, ErrDivisionByZero` without crashing the program.
-
----
-
-### Lab 6: Panic vs Error — When to Use Each
-
-**What you'll practise:** the Go convention that panics signal programming errors, while returned errors signal expected failure conditions.
-
-**Task:**
-Build two contrasting examples: one where `panic` is appropriate (programmer error during init) and one where returning an error is correct (runtime failure). Add comments explaining the rule.
-
-**Steps:**
-1. Write `mustPositive(n int) int` that panics with a helpful message if `n <= 0` — this is a programmer-error guard for invariants
-2. Write `openConfig(path string) (*Config, error)` that returns an error when the file is missing — this is a recoverable runtime condition
-3. In `main`, use `mustPositive` with a valid value; show what happens with an invalid one using `safeDiv`-style recover in a test
-4. Add a comment block explaining: panic in `init`/setup for invariants; return errors for expected failures
-
-```go
-// mustPositive is called during program setup.
-// It panics because a non-positive value here is a programming bug,
-// not a runtime condition the caller should handle.
-func mustPositive(n int) int {
-    if n <= 0 {
-        panic(fmt.Sprintf("mustPositive: got %d, want > 0", n))
-    }
-    return n
-}
-
-// openConfig returns an error because a missing file is a
-// recoverable condition — the caller can log it, use defaults, or retry.
-func openConfig(path string) ([]byte, error) {
-    return os.ReadFile(path)
-}
-```
-
-**Expected output:**
-```
-Port: 8080
-openConfig: open missing.toml: no such file or directory
-```
-
-**Checkpoint:** You can articulate in a comment: use `panic` only for invariant violations detected at startup; use returned errors for all runtime failures callers might handle.
-
----
-
-### Final Lab (Project): CSV Row Parser
-
-**What you'll practise:** combining sentinel errors, custom error types, error wrapping, and `errors.Join` into a realistic parsing component.
-
-**Task:**
-Parse rows from a CSV string. Define `ErrEmptyField` and `ParseError`, write a `parseRow` function that validates field count and content, and demonstrate `errors.Is` / `errors.As` at the call site.
-
-**Steps:**
-1. Define `var ErrEmptyField = errors.New("empty required field")`
-2. Define `ParseError{Line, Col int, Msg string}` implementing `error`
-3. Write `parseRow(line string, lineNum int) ([]string, error)` that wraps `ErrEmptyField` in a `ParseError` when a field is blank
-4. Parse several rows — some valid, some invalid — and inspect errors with `errors.Is` and `errors.As`
-
-```go
-func parseRow(line string, lineNum int) ([]string, error) {
-    fields := strings.Split(line, ",")
-    if len(fields) != 3 {
-        return nil, &ParseError{Line: lineNum, Col: 0,
-            Msg: fmt.Sprintf("expected 3 fields, got %d", len(fields))}
-    }
-    for i, f := range fields {
-        if strings.TrimSpace(f) == "" {
-            return nil, &ParseError{
-                Line: lineNum, Col: i + 1,
-                Msg:  fmt.Sprintf("%w", ErrEmptyField),
-            }
+    best := shapes[0]
+    for _, s := range shapes[1:] {
+        if s.Area() > best.Area() {
+            best = s
         }
     }
-    return fields, nil
+    return best
 }
 ```
 
 **Expected output:**
 ```
-row 1: [alice 30 engineer]
-row 2: parse error line 2 col 2: empty required field
-  -> errors.Is(ErrEmptyField): true
-  -> line: 2
+Total area: 96.54
+Largest: Circle(r=5.00)
 ```
 
-**Checkpoint:** `errors.Is(err, ErrEmptyField)` is true for blank-field rows; `errors.As` extracts the line number; valid rows parse cleanly.
+**Checkpoint:** `LargestShape` returns the correct shape for any ordering of the input slice.
 
-**Extension ideas:** stack multiple errors with [`errors.Join`](https://pkg.go.dev/errors#Join) (Go 1.20+); write a retry wrapper that retries on transient errors.
+---
+
+### Lab 3: Type Assertions — Extract Only Circles
+
+**What you'll practise:** the comma-ok form of type assertions to safely extract concrete types from an interface slice.
+
+**Task:**
+Given a `[]Shape` containing mixed types, use type assertion to collect only the `Circle` values into a `[]Circle`. Handle the non-circle case gracefully.
+
+**Steps:**
+1. Create `shapes := []Shape{Circle{1}, Rectangle{2,3}, Circle{5}, Triangle{3,4,5}}`
+2. Iterate and attempt `c, ok := s.(Circle)` — collect only when `ok` is true
+3. Print each extracted circle's radius
+4. Also demonstrate the panicking form `s.(Circle)` on a known Circle, then show what happens with the wrong type using a recover
+
+```go
+func extractCircles(shapes []Shape) []Circle {
+    var circles []Circle
+    for _, s := range shapes {
+        if c, ok := s.(Circle); ok {
+            circles = append(circles, c)
+        }
+    }
+    return circles
+}
+```
+
+**Expected output:**
+```
+Circles: [Circle(r=1.00) Circle(r=5.00)]
+Non-circles skipped: 2
+```
+
+**Checkpoint:** The function never panics regardless of the input slice composition.
+
+---
+
+### Lab 4: Type Switch — `describe`
+
+**What you'll practise:** type switches for dispatching on concrete types without explicit if-chains.
+
+**Task:**
+Write `describe(s Shape) string` that returns a human-readable sentence about the shape using a type switch.
+
+**Steps:**
+1. Implement `describe` with `switch v := s.(type)`
+2. Handle `Circle`, `Rectangle`, `Triangle` with shape-specific sentences
+3. Add a `default` case returning "unknown shape"
+4. Test with all three types and an unknown type wrapped in an interface
+
+```go
+func describe(s Shape) string {
+    switch v := s.(type) {
+    case Circle:
+        return fmt.Sprintf("a circle with radius %.2f and area %.2f", v.Radius, v.Area())
+    case Rectangle:
+        return fmt.Sprintf("a %.2f by %.2f rectangle", v.Width, v.Height)
+    case Triangle:
+        return fmt.Sprintf("a triangle with sides %.2f, %.2f, %.2f", v.A, v.B, v.C)
+    default:
+        return fmt.Sprintf("unknown shape: %T", v)
+    }
+}
+```
+
+**Expected output:**
+```
+a circle with radius 5.00 and area 78.54
+a 3.00 by 4.00 rectangle
+a triangle with sides 3.00, 4.00, 5.00
+```
+
+**Checkpoint:** `describe` handles all three types and the default case without any type assertions outside the switch.
+
+---
+
+### Lab 5: Interface Composition — `LabelledShape`
+
+**What you'll practise:** embedding interfaces to compose richer interface types.
+
+**Task:**
+Define a `Stringer` interface (`String() string`), a `Sizer` interface (`Size() float64`), and a composed `LabelledShape` interface that embeds both plus `Shape`. Then write a function that accepts only `LabelledShape`.
+
+**Steps:**
+1. Define `type Stringer interface { String() string }` and `type Sizer interface { Size() float64 }`
+2. Define `type LabelledShape interface { Shape; Stringer; Sizer }`
+3. Add `Size() float64` to `Circle` (returning diameter) and `Rectangle` (returning diagonal)
+4. Write `PrintLabelled(ls LabelledShape)` that prints the label, size, area, and perimeter
+5. Observe that `Triangle` does not implement `LabelledShape` (compile error if you try)
+
+```go
+type Stringer interface{ String() string }
+type Sizer   interface{ Size() float64 }
+
+type LabelledShape interface {
+    Shape
+    Stringer
+    Sizer
+}
+
+func PrintLabelled(ls LabelledShape) {
+    fmt.Printf("%s  size=%.2f  area=%.2f  perim=%.2f\n",
+        ls.String(), ls.Size(), ls.Area(), ls.Perimeter())
+}
+```
+
+**Expected output:**
+```
+Circle(r=5.00)  size=10.00  area=78.54  perim=31.42
+Rect(3.00x4.00) size=5.00   area=12.00  perim=14.00
+```
+
+**Checkpoint:** `PrintLabelled` compiles only when called with a type that satisfies all three embedded interfaces.
+
+---
+
+### Lab 6: The Empty Interface — `PrintAll`
+
+**What you'll practise:** using `any` to accept heterogeneous values, and understanding why `any` loses type safety.
+
+**Task:**
+Write `PrintAll(values []any)` that prints each value using `fmt.Sprint`. Then demonstrate the loss of type safety by mixing shapes, integers, and strings in the same slice.
+
+**Steps:**
+1. Implement `PrintAll` using a range loop and `fmt.Sprintf("%v (%T)", v, v)`
+2. Call it with `[]any{Circle{3}, 42, "hello", true}`
+3. Try calling `.Area()` on an element extracted from the `[]any` — observe the compile error (you must assert first)
+4. Discuss in a comment why `[]Shape` is safer than `[]any` for shape collections
+
+```go
+func PrintAll(values []any) {
+    for _, v := range values {
+        fmt.Printf("%v  (type: %T)\n", v, v)
+    }
+}
+
+func main() {
+    PrintAll([]any{Circle{Radius: 3}, 42, "hello", true})
+
+    // To call .Area() you must assert — any loses the interface:
+    var v any = Circle{Radius: 3}
+    if s, ok := v.(Shape); ok {
+        fmt.Println("area:", s.Area())
+    }
+}
+```
+
+**Expected output:**
+```
+Circle(r=3.00)  (type: main.Circle)
+42  (type: int)
+hello  (type: string)
+true  (type: bool)
+area: 28.27
+```
+
+**Checkpoint:** You can explain in a comment why `[]any` is appropriate here but `[]Shape` would be better for a collection of shapes.
+
+---
+
+### Final Lab (Project): Shape Library
+
+**What you'll practise:** combining interface design, type assertions, type switches, interface composition, and the empty interface into a coherent shape library.
+
+**Task:**
+Build a complete shape library that brings together all six labs: define the `Shape` interface, implement three concrete types, write `TotalArea` and `LargestShape`, add a type switch `describe` function, compose a `LabelledShape` interface, and demonstrate `any`.
+
+**Steps:**
+1. Define `Shape` interface with `Area() float64` and `Perimeter() float64`
+2. Implement `Circle`, `Rectangle`, `Triangle` concrete types with `fmt.Stringer`
+3. Write `TotalArea(shapes []Shape) float64` and `LargestShape(shapes []Shape) Shape`
+4. Write `describe(s Shape) string` using a type switch
+5. Create a mixed `[]Shape` and print total area, largest shape, and descriptions
+
+```go
+shapes := []Shape{
+    Circle{Radius: 5},
+    Rectangle{Width: 3, Height: 4},
+    Triangle{A: 3, B: 4, C: 5},
+}
+fmt.Printf("Total area:  %.2f\n", TotalArea(shapes))
+fmt.Printf("Largest:     %s\n", LargestShape(shapes))
+for _, s := range shapes {
+    fmt.Println(describe(s))
+}
+```
+
+**Expected output:**
+```
+Total area:  96.54
+Largest:     Circle(r=5.00)
+a circle with radius 5.00 and area 78.54
+a 3.00 by 4.00 rectangle
+a triangle with sides 3.00, 4.00, 5.00
+```
+
+**Checkpoint:** `go test ./...` passes; `go vet ./...` is clean; each concrete type satisfies `Shape` with no explicit declaration.
+
+**Extension ideas:** add a `Scale(factor float64) Shape` method; implement `json.Marshaler`.
 
 ## Official Documentation
 
-- [`errors`](https://pkg.go.dev/errors) — New, Is, As, Unwrap, Join
-- [`fmt`](https://pkg.go.dev/fmt) — Errorf with `%w` wrapping verb
-- [Language Spec: Errors](https://go.dev/ref/spec#Errors) — the built-in error interface
-- [Effective Go: Errors](https://go.dev/doc/effective_go#errors) — error handling patterns
-- [Go Blog: Error handling and Go](https://go.dev/blog/error-handling-and-go) — idiomatic error handling
-- [Go Blog: Working with errors in Go 1.13](https://go.dev/blog/go1.13-errors) — wrapping, Is, As
+- [`fmt`](https://pkg.go.dev/fmt) — Stringer interface, Printf, Sprintf
+- [`io`](https://pkg.go.dev/io) — Reader and Writer interfaces
+- [`sort`](https://pkg.go.dev/sort) — sort.Interface for custom sorting
+- [`math`](https://pkg.go.dev/math) — `math.Pi` and other constants
+- [Language Spec: Interface types](https://go.dev/ref/spec#Interface_types) — interface declarations
+- [Language Spec: Type assertions](https://go.dev/ref/spec#Type_assertions) — safe type extraction
+- [Language Spec: Type switches](https://go.dev/ref/spec#Type_switches) — dispatch on concrete type
+- [Effective Go: Interfaces](https://go.dev/doc/effective_go#interfaces) — interface design principles
+- [Go Tour: Interfaces](https://go.dev/tour/methods/9) — interactive interfaces tour

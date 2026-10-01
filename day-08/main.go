@@ -1,94 +1,75 @@
+// Day 32 – Idiomatic Go Project Structure
+//
+// This program demonstrates domain-driven layout by wiring together
+// independent packages from internal/:
+//
+//   internal/notes     – Note domain type, Store interface, MemoryStore
+//   internal/notes     – HTTP handlers (handler.go)
+//   internal/platform  – HTTP server with graceful shutdown
+//
+// Run:
+//
+//	go run . [-addr :8080]
+//
+// Example requests:
+//
+//	curl -X POST -d '{"title":"Buy milk","body":"Organic 2%"}' http://localhost:8080/notes
+//	curl http://localhost:8080/notes
+//	curl http://localhost:8080/notes/1
+//	curl -X PUT  -d '{"title":"Buy oat milk","body":""}' http://localhost:8080/notes/1
+//	curl -X DELETE http://localhost:8080/notes/1
 package main
 
 import (
+	"flag"
 	"fmt"
-	"math"
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/mmussett/zero2hero-golang/day-08/internal/notes"
+	"github.com/mmussett/zero2hero-golang/day-08/internal/platform"
 )
 
-type Shape interface {
-	Area() float64
-	Perimeter() float64
-}
-
-// Circle
-type Circle struct{ Radius float64 }
-
-func (c Circle) Area() float64      { return math.Pi * c.Radius * c.Radius }
-func (c Circle) Perimeter() float64 { return 2 * math.Pi * c.Radius }
-func (c Circle) String() string     { return fmt.Sprintf("Circle(r=%.2f)", c.Radius) }
-
-// Rectangle
-type Rectangle struct{ Width, Height float64 }
-
-func (r Rectangle) Area() float64      { return r.Width * r.Height }
-func (r Rectangle) Perimeter() float64 { return 2 * (r.Width + r.Height) }
-func (r Rectangle) String() string     { return fmt.Sprintf("Rectangle(%.2fx%.2f)", r.Width, r.Height) }
-
-// Triangle (using Heron's formula)
-type Triangle struct{ A, B, C float64 }
-
-func (t Triangle) Perimeter() float64 { return t.A + t.B + t.C }
-func (t Triangle) Area() float64 {
-	s := t.Perimeter() / 2
-	return math.Sqrt(s * (s - t.A) * (s - t.B) * (s - t.C))
-}
-func (t Triangle) String() string {
-	return fmt.Sprintf("Triangle(%.2f,%.2f,%.2f)", t.A, t.B, t.C)
-}
-
-func TotalArea(shapes []Shape) float64 {
-	var total float64
-	for _, s := range shapes {
-		total += s.Area()
-	}
-	return total
-}
-
-func LargestShape(shapes []Shape) Shape {
-	if len(shapes) == 0 {
-		return nil
-	}
-	largest := shapes[0]
-	for _, s := range shapes[1:] {
-		if s.Area() > largest.Area() {
-			largest = s
-		}
-	}
-	return largest
-}
-
-func describe(s Shape) string {
-	switch v := s.(type) {
-	case Circle:
-		return fmt.Sprintf("a circle with radius %.2f", v.Radius)
-	case Rectangle:
-		if v.Width == v.Height {
-			return "a square rectangle"
-		}
-		return "a rectangular rectangle"
-	case Triangle:
-		return fmt.Sprintf("a triangle with sides %.2f, %.2f, %.2f", v.A, v.B, v.C)
-	default:
-		return "unknown shape"
-	}
-}
-
 func main() {
-	shapes := []Shape{
-		Circle{Radius: 5},
-		Rectangle{Width: 4, Height: 6},
-		Triangle{A: 3, B: 4, C: 5},
-		Circle{Radius: 2},
-		Rectangle{Width: 8, Height: 8},
+	addr := flag.String("addr", ":8080", "HTTP listen address")
+	flag.Parse()
+
+	// Domain: in-memory note store
+	store := notes.NewMemoryStore()
+
+	// HTTP layer
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.RealIP)
+
+	// Health check
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	// Notes sub-routes
+	h := notes.NewHandler(store)
+	h.Routes(r)
+
+	// Seed a couple of demo notes so the API is not empty on first run
+	if _, err := store.Create("Welcome to Day 32", "This is the Notes API restructured with domain-driven layout."); err != nil {
+		log.Println("seed note 1:", err)
+	}
+	if _, err := store.Create("Go project structure", "internal/, cmd/, platform/ — keep concerns separate."); err != nil {
+		log.Println("seed note 2:", err)
 	}
 
-	fmt.Printf("%-35s %10s %12s\n", "Shape", "Area", "Perimeter")
-	fmt.Println("─────────────────────────────────────────────────────")
-	for _, s := range shapes {
-		fmt.Printf("%-35s %10.2f %12.2f\n", s, s.Area(), s.Perimeter())
-	}
+	fmt.Printf("Notes API\n  addr  : http://localhost%s\n  routes: GET/POST /notes, GET/PUT/DELETE /notes/{id}\n\n", *addr)
 
-	fmt.Printf("\nTotal area:    %.2f\n", TotalArea(shapes))
-	largest := LargestShape(shapes)
-	fmt.Printf("Largest shape: %s (it's %s)\n", largest, describe(largest))
+	srv := platform.NewServer(*addr, r)
+	if err := srv.Run(); err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
 }

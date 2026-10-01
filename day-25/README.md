@@ -1,415 +1,434 @@
-# Day 25: Structured Logging with log/slog
+# Day 25: Error Handling at Scale
 
-## Core Concept: Logs Are Data, Not Text
+## Core Concept: Errors Should Carry Context
 
-`log/slog` (Go 1.21+) replaces the old `log` package for production code. Structured logs — key-value pairs — can be parsed, searched, and aggregated by log platforms.
+At scale, errors need to carry enough information for:
+1. The calling code to decide what to do (sentinel / type check)
+2. The human reading logs to understand what happened (message + context)
+3. The HTTP handler to return the right status code
 
-## Basic Usage
-
-```go
-import "log/slog"
-
-slog.Info("server started", "addr", ":8080")
-slog.Error("request failed", "err", err, "path", r.URL.Path)
-slog.Debug("cache hit", "key", key, "ttl", ttl)
-```
-
-## Configuring the Global Logger
+## Error Hierarchy Pattern
 
 ```go
-// JSON handler (for production)
-logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-    Level: slog.LevelInfo,
-}))
-slog.SetDefault(logger)
+// Sentinel errors — identity checks
+var (
+    ErrNotFound   = errors.New("not found")
+    ErrConflict   = errors.New("conflict")
+    ErrValidation = errors.New("validation failed")
+)
 
-// Text handler (for development)
-slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
-```
-
-## Logger With Context
-
-```go
-// Attach attributes to a logger
-log := slog.With("service", "notes-api", "version", "1.0.0")
-log.Info("request received")
-
-// Logger in context (for request-scoped logging)
-func withLogger(ctx context.Context, log *slog.Logger) context.Context {
-    return context.WithValue(ctx, loggerKey{}, log)
+// Typed error — carries data + wraps a sentinel
+type AppError struct {
+    Code    string // machine-readable
+    Message string // human-readable
+    Err     error  // wrapped sentinel
 }
 
-func loggerFrom(ctx context.Context) *slog.Logger {
-    if l, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {
-        return l
+func (e *AppError) Error() string { return e.Message }
+func (e *AppError) Unwrap() error { return e.Err }
+
+func NotFound(resource, id string) *AppError {
+    return &AppError{
+        Code:    "NOT_FOUND",
+        Message: fmt.Sprintf("%s %q not found", resource, id),
+        Err:     ErrNotFound,
     }
-    return slog.Default()
 }
 ```
 
-## Middleware: Request ID + Per-Request Logger
+## HTTP Error Mapping
 
 ```go
-func requestLogger(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        start   := time.Now()
-        traceID := newTraceID()
-        log := slog.With(
-            "trace_id", traceID,
-            "method",   r.Method,
-            "path",     r.URL.Path,
-        )
-        ctx := withLogger(r.Context(), log)
-        log.Info("request started")
+func httpStatus(err error) int {
+    switch {
+    case errors.Is(err, ErrNotFound):   return http.StatusNotFound
+    case errors.Is(err, ErrConflict):   return http.StatusConflict
+    case errors.Is(err, ErrValidation): return http.StatusBadRequest
+    default:                            return http.StatusInternalServerError
+    }
+}
 
-        rw := &statusWriter{ResponseWriter: w}
-        next.ServeHTTP(rw, r.WithContext(ctx))
-
-        log.Info("request completed",
-            "status",   rw.status,
-            "duration", time.Since(start).String(),
-        )
-    })
+func handleErr(w http.ResponseWriter, err error) {
+    var ae *AppError
+    if errors.As(err, &ae) {
+        writeJSON(w, httpStatus(err), map[string]string{
+            "code":    ae.Code,
+            "message": ae.Message,
+        })
+        return
+    }
+    http.Error(w, "internal server error", 500)
 }
 ```
 
-## Log Levels
+## errors.Join (Go 1.20+)
+
+Aggregate multiple errors:
 
 ```go
-slog.Debug(...)  // verbose dev info
-slog.Info(...)   // normal operation
-slog.Warn(...)   // unexpected but recoverable
-slog.Error(...)  // failures requiring attention
+func validateNote(n Note) error {
+    var errs []error
+    if n.Text == "" { errs = append(errs, errors.New("text is required")) }
+    if len(n.Text) > 10000 { errs = append(errs, errors.New("text too long")) }
+    return errors.Join(errs...)
+}
 ```
 
 ## Labs
 
-### Lab 1: Default slog — Your First Structured Log
+### Lab 1: Sentinel Errors
 
-**What you'll practise:** Using the global slog functions with key-value pairs and observing the default text output.
+**What you'll practise:** Defining package-level sentinel errors and checking them with `errors.Is`.
 
 **Task:**
-Write a program that logs several events using `slog.Info`, `slog.Warn`, and `slog.Error` with meaningful key-value attributes, then observe the default text format output.
+Define three sentinel errors — `ErrNotFound`, `ErrUnauthorized`, `ErrValidation` — in a package. Write a function that returns each based on a string argument. Verify with `errors.Is`.
 
 **Steps:**
-1. Create `main.go` with `package main`
-2. Import `"log/slog"` and `"errors"`
-3. Call `slog.Info`, `slog.Warn`, and `slog.Error` with at least two key-value pairs each
+1. Declare `var ErrNotFound = errors.New("not found")` etc. at package level
+2. Write `lookup(kind string) error` that returns the appropriate sentinel (or `nil`)
+3. In `main`, call `lookup` with each kind and assert with `errors.Is`
+4. Confirm that `errors.Is(ErrNotFound, ErrUnauthorized)` is `false`
 
 ```go
-package main
-
-import (
-    "errors"
-    "log/slog"
+var (
+    ErrNotFound     = errors.New("not found")
+    ErrUnauthorized = errors.New("unauthorized")
+    ErrValidation   = errors.New("validation failed")
 )
 
-func main() {
-    slog.Info("server started", "addr", ":8080", "pid", 1234)
-    slog.Warn("high memory usage", "percent", 87.5, "threshold", 80)
-    err := errors.New("connection refused")
-    slog.Error("database unreachable", "err", err, "host", "localhost:5432")
-}
-```
-
-**Expected output:**
-```
-2024/01/15 10:00:00 INFO server started addr=:8080 pid=1234
-2024/01/15 10:00:00 WARN high memory usage percent=87.5 threshold=80
-2024/01/15 10:00:00 ERROR database unreachable err="connection refused" host=localhost:5432
-```
-
-**Checkpoint:** Three log lines appear with key=value pairs. The level prefix (INFO/WARN/ERROR) is visible in each line.
-
----
-
-### Lab 2: JSON Handler — Structured Output for Production
-
-**What you'll practise:** Switching to `slog.NewJSONHandler` and comparing JSON vs text output.
-
-**Task:**
-Create a JSON-format logger, set it as the global default, and log the same messages as Lab 1. Compare the output structure.
-
-**Steps:**
-1. Add `"os"` to your imports
-2. Create a JSON handler writing to `os.Stdout`
-3. Wrap it in `slog.New` and call `slog.SetDefault`
-4. Re-run the same three log calls and observe the difference
-
-```go
-import (
-    "log/slog"
-    "os"
-)
-
-func main() {
-    logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-    slog.SetDefault(logger)
-
-    slog.Info("server started", "addr", ":8080", "pid", 1234)
-    slog.Warn("high memory usage", "percent", 87.5, "threshold", 80)
-}
-```
-
-**Expected output:**
-```
-{"time":"2024-01-15T10:00:00Z","level":"INFO","msg":"server started","addr":":8080","pid":1234}
-{"time":"2024-01-15T10:00:00Z","level":"WARN","msg":"high memory usage","percent":87.5,"threshold":80}
-```
-
-**Checkpoint:** Each log line is valid JSON. Pipe through `| python3 -m json.tool` to pretty-print and confirm the structure.
-
----
-
-### Lab 3: Log Levels — Controlling Verbosity
-
-**What you'll practise:** Filtering log output by setting a minimum log level with `slog.HandlerOptions`.
-
-**Task:**
-Configure a handler with `Level: slog.LevelWarn` and observe that `Debug` and `Info` calls are silently dropped.
-
-**Steps:**
-1. Create a handler with `&slog.HandlerOptions{Level: slog.LevelWarn}`
-2. Log one message at each level: Debug, Info, Warn, Error
-3. Verify only Warn and Error appear in the output
-
-```go
-opts   := &slog.HandlerOptions{Level: slog.LevelWarn}
-logger := slog.New(slog.NewJSONHandler(os.Stdout, opts))
-
-logger.Debug("this is debug", "detail", "verbose")
-logger.Info("this is info", "user", "alice")
-logger.Warn("this is warn", "latency_ms", 450)
-logger.Error("this is error", "err", errors.New("timeout"))
-```
-
-**Expected output:**
-```
-{"time":"...","level":"WARN","msg":"this is warn","latency_ms":450}
-{"time":"...","level":"ERROR","msg":"this is error","err":"timeout"}
-```
-
-**Checkpoint:** Exactly two lines appear. The Debug and Info lines are absent.
-
----
-
-### Lab 4: Structured Attributes — Child Loggers with Permanent Fields
-
-**What you'll practise:** Using `slog.With` to create a child logger that embeds permanent key-value fields on every line.
-
-**Task:**
-Create a base logger, then derive a child logger with `service` and `version` fields. All log calls through the child automatically include those fields.
-
-**Steps:**
-1. Create a JSON logger as the base
-2. Call `.With("service", "api", "version", "1.0.0")` to produce a child logger
-3. Log several messages through the child and observe the permanent fields
-
-```go
-base := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-log  := base.With("service", "api", "version", "1.0.0")
-
-log.Info("starting up", "port", 8080)
-log.Info("connected to db", "host", "localhost")
-log.Error("request failed", "path", "/users", "err", errors.New("not found"))
-```
-
-**Expected output:**
-```
-{"time":"...","level":"INFO","msg":"starting up","service":"api","version":"1.0.0","port":8080}
-{"time":"...","level":"INFO","msg":"connected to db","service":"api","version":"1.0.0","host":"localhost"}
-{"time":"...","level":"ERROR","msg":"request failed","service":"api","version":"1.0.0","path":"/users","err":"not found"}
-```
-
-**Checkpoint:** Every line contains `"service":"api"` and `"version":"1.0.0"` without adding them to each individual call.
-
----
-
-### Lab 5: Context Logging — Request-Scoped Logger
-
-**What you'll practise:** Storing and retrieving a `*slog.Logger` from `context.Context` using a typed key.
-
-**Task:**
-Write `WithLogger` and `LoggerFrom` helper functions. Store a logger enriched with a request ID in context and retrieve it inside a simulated handler function.
-
-**Steps:**
-1. Define a private `type logKey struct{}`
-2. Write `WithLogger(ctx, log)` and `LoggerFrom(ctx)` functions
-3. Simulate a handler that reads the logger from context — the request ID flows through automatically
-
-```go
-type logKey struct{}
-
-func WithLogger(ctx context.Context, log *slog.Logger) context.Context {
-    return context.WithValue(ctx, logKey{}, log)
-}
-
-func LoggerFrom(ctx context.Context) *slog.Logger {
-    if l, ok := ctx.Value(logKey{}).(*slog.Logger); ok {
-        return l
+func lookup(kind string) error {
+    switch kind {
+    case "notfound":
+        return ErrNotFound
+    case "auth":
+        return ErrUnauthorized
+    case "validation":
+        return ErrValidation
+    default:
+        return nil
     }
-    return slog.Default()
-}
-
-func handleRequest(ctx context.Context) {
-    log := LoggerFrom(ctx)
-    log.Info("processing request")
-    log.Info("fetching user", "user_id", 42)
 }
 
 func main() {
-    base := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-    log  := base.With("request_id", "req-abc-123")
-    ctx  := WithLogger(context.Background(), log)
-    handleRequest(ctx)
+    for _, kind := range []string{"notfound", "auth", "validation"} {
+        err := lookup(kind)
+        fmt.Printf("Is ErrNotFound: %v, Is ErrUnauthorized: %v, Is ErrValidation: %v\n",
+            errors.Is(err, ErrNotFound),
+            errors.Is(err, ErrUnauthorized),
+            errors.Is(err, ErrValidation),
+        )
+    }
 }
 ```
 
 **Expected output:**
 ```
-{"time":"...","level":"INFO","msg":"processing request","request_id":"req-abc-123"}
-{"time":"...","level":"INFO","msg":"fetching user","request_id":"req-abc-123","user_id":42}
+Is ErrNotFound: true, Is ErrUnauthorized: false, Is ErrValidation: false
+Is ErrNotFound: false, Is ErrUnauthorized: true, Is ErrValidation: false
+Is ErrNotFound: false, Is ErrUnauthorized: false, Is ErrValidation: true
 ```
 
-**Checkpoint:** Both log lines carry `"request_id"` without `handleRequest` referencing the request ID directly.
+**Checkpoint:** Each call to `errors.Is` returns true only for the correct sentinel.
 
 ---
 
-### Lab 6: HTTP Request Middleware — Logging Every Request
+### Lab 2: Custom Error Type
 
-**What you'll practise:** Building an `http.Handler` middleware that logs method, path, status code, and duration for every incoming request.
+**What you'll practise:** Defining a struct error type with `Error()` and `Unwrap()`, and checking it with `errors.As`.
 
 **Task:**
-Write a `requestLogger` middleware. It wraps `ResponseWriter` to capture the status code, then logs a completion entry with timing after the handler returns.
+Define `AppError{Code string, Message string, Err error}`. Implement `Error()` and `Unwrap()`. Write a function that returns an `*AppError` wrapping `ErrNotFound`. Use `errors.As` to extract the `AppError` and inspect its `Code`.
 
 **Steps:**
-1. Define `statusWriter` embedding `http.ResponseWriter` with a `status int` field and a `WriteHeader` override
-2. Write `requestLogger(log *slog.Logger, next http.Handler) http.Handler`
-3. Generate a short request ID with `fmt.Sprintf("%08x", rand.Int32())`
-4. Register a simple handler at `/hello`, wrap it, and start the server
+1. Define the struct and its two methods
+2. Write `NotFoundError(resource, id string) *AppError` constructor
+3. In `main`, call the constructor, then use `errors.As` to extract and print `ae.Code`
+4. Verify that `errors.Is(err, ErrNotFound)` is still `true` (because `Unwrap` returns it)
 
 ```go
-type statusWriter struct {
-    http.ResponseWriter
-    status int
+type AppError struct {
+    Code    string
+    Message string
+    Err     error
 }
 
-func (sw *statusWriter) WriteHeader(code int) {
-    sw.status = code
-    sw.ResponseWriter.WriteHeader(code)
+func (e *AppError) Error() string { return e.Message }
+func (e *AppError) Unwrap() error { return e.Err }
+
+func NotFoundError(resource, id string) *AppError {
+    return &AppError{
+        Code:    "NOT_FOUND",
+        Message: fmt.Sprintf("%s %q not found", resource, id),
+        Err:     ErrNotFound,
+    }
 }
 
-func requestLogger(log *slog.Logger, next http.Handler) http.Handler {
+err := NotFoundError("note", "42")
+var ae *AppError
+if errors.As(err, &ae) {
+    fmt.Println("code:", ae.Code)
+    fmt.Println("message:", ae.Message)
+}
+fmt.Println("is ErrNotFound:", errors.Is(err, ErrNotFound))
+```
+
+**Expected output:**
+```
+code: NOT_FOUND
+message: note "42" not found
+is ErrNotFound: true
+```
+
+**Checkpoint:** `errors.As` succeeds and `errors.Is` works through the `Unwrap` chain.
+
+---
+
+### Lab 3: Error Wrapping Chain
+
+**What you'll practise:** Wrapping errors three levels deep with `fmt.Errorf %w` and traversing the chain manually.
+
+**Task:**
+Simulate a three-level call stack: `db layer` returns a sentinel, `service layer` wraps it, `handler layer` wraps again. Unwrap the chain manually with a loop and print each level. Then use `errors.Is` at the outermost error.
+
+**Steps:**
+1. Define `dbErr = errors.New("row not found")`
+2. Wrap: `svcErr = fmt.Errorf("service: %w", dbErr)`
+3. Wrap again: `handlerErr = fmt.Errorf("handler: %w", svcErr)`
+4. Loop using `errors.Unwrap` to traverse the chain, printing each error
+
+```go
+dbErr      := errors.New("row not found")
+svcErr     := fmt.Errorf("service lookup: %w", dbErr)
+handlerErr := fmt.Errorf("handle request: %w", svcErr)
+
+fmt.Println("full chain:", handlerErr)
+fmt.Println("errors.Is (dbErr):", errors.Is(handlerErr, dbErr))
+
+// Manual unwrap
+for err := error(handlerErr); err != nil; err = errors.Unwrap(err) {
+    fmt.Println("unwrap:", err)
+}
+```
+
+**Expected output:**
+```
+full chain: handle request: service lookup: row not found
+errors.Is (dbErr): true
+unwrap: handle request: service lookup: row not found
+unwrap: service lookup: row not found
+unwrap: row not found
+```
+
+**Checkpoint:** `errors.Is` finds the root sentinel through three wrapping layers.
+
+---
+
+### Lab 4: errors.Join
+
+**What you'll practise:** Aggregating multiple validation errors with `errors.Join` (Go 1.20+) and verifying individual errors remain findable.
+
+**Task:**
+Write a `validateUser(name, email string) error` function that collects failures (empty name, missing `@` in email) and returns them joined. Call it with invalid input and print the result. Verify `errors.Is` still works on joined errors.
+
+**Steps:**
+1. Collect errors into a `[]error` slice
+2. Return `errors.Join(errs...)` (returns `nil` if the slice is empty)
+3. Print the error; observe all messages appear
+4. Confirm `errors.Is(joinedErr, ErrValidation)` is `true` if you wrap sentinels
+
+```go
+var ErrValidation = errors.New("validation failed")
+
+func validateUser(name, email string) error {
+    var errs []error
+    if name == "" {
+        errs = append(errs, fmt.Errorf("%w: name is required", ErrValidation))
+    }
+    if !strings.Contains(email, "@") {
+        errs = append(errs, fmt.Errorf("%w: email must contain @", ErrValidation))
+    }
+    return errors.Join(errs...)
+}
+
+err := validateUser("", "not-an-email")
+fmt.Println(err)
+fmt.Println("is ErrValidation:", errors.Is(err, ErrValidation))
+fmt.Println("valid user:", validateUser("Alice", "alice@example.com"))
+```
+
+**Expected output:**
+```
+validation failed: name is required
+validation failed: email must contain @
+is ErrValidation: true
+valid user: <nil>
+```
+
+**Checkpoint:** All error messages appear in the output; `errors.Is` works through the joined error.
+
+---
+
+### Lab 5: HTTP Error Mapping
+
+**What you'll practise:** Writing an `HTTPStatus(err error) int` function that maps `AppError` codes to HTTP status codes using `errors.As`.
+
+**Task:**
+Write `HTTPStatus` using a switch on `AppError.Code`. Demonstrate it by calling it with errors produced by `NotFoundError`, `ConflictError`, and `ValidationError` constructors and printing the status code for each.
+
+**Steps:**
+1. Add `ConflictError` and `ValidationError` constructors alongside `NotFoundError`
+2. Write `HTTPStatus(err error) int` that uses `errors.As` to get `*AppError`, then switches on `ae.Code`
+3. Default to 500 for unknown errors
+4. Print results for all three error types plus an untyped error
+
+```go
+func HTTPStatus(err error) int {
+    var ae *AppError
+    if !errors.As(err, &ae) {
+        return http.StatusInternalServerError
+    }
+    switch ae.Code {
+    case "NOT_FOUND":
+        return http.StatusNotFound
+    case "CONFLICT":
+        return http.StatusConflict
+    case "VALIDATION":
+        return http.StatusBadRequest
+    default:
+        return http.StatusInternalServerError
+    }
+}
+
+fmt.Println(HTTPStatus(NotFoundError("note", "1")))    // 404
+fmt.Println(HTTPStatus(ConflictError("note", "dup")))  // 409
+fmt.Println(HTTPStatus(ValidationError("text empty"))) // 400
+fmt.Println(HTTPStatus(errors.New("unknown")))         // 500
+```
+
+**Expected output:**
+```
+404
+409
+400
+500
+```
+
+**Checkpoint:** Each status code matches the expected HTTP constant; untyped errors always return 500.
+
+---
+
+### Lab 6: Error Middleware for chi
+
+**What you'll practise:** Writing chi middleware that catches `*AppError` from handlers and writes a structured JSON error response.
+
+**Task:**
+Define a convention where handlers return errors by setting a value in the request context. Write `ErrorMiddleware` that reads that value after the handler returns and calls `handleErr` to write the correct JSON response.
+
+**Steps:**
+1. Define a context key type and `SetError(ctx, err) context.Context` / `GetError(ctx) error` helpers
+2. Write `ErrorMiddleware(next http.Handler) http.Handler` that reads the error after `next.ServeHTTP`
+3. In `handleErr`, use `HTTPStatus` and write `{"code":"...","message":"..."}` JSON
+4. Wire it up on a chi router and test with a handler that sets a not-found error
+
+```go
+type ctxKey struct{}
+
+func SetError(ctx context.Context, err error) context.Context {
+    return context.WithValue(ctx, ctxKey{}, err)
+}
+
+func GetError(ctx context.Context) error {
+    err, _ := ctx.Value(ctxKey{}).(error)
+    return err
+}
+
+func ErrorMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        start := time.Now()
-        reqID := fmt.Sprintf("%08x", rand.Int32())
-        l     := log.With("request_id", reqID, "method", r.Method, "path", r.URL.Path)
-
-        sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-        next.ServeHTTP(sw, r.WithContext(WithLogger(r.Context(), l)))
-
-        l.Info("request completed",
-            "status",      sw.status,
-            "duration_ms", time.Since(start).Milliseconds(),
-        )
+        ctx := r.Context()
+        next.ServeHTTP(w, r.WithContext(ctx))
+        if err := GetError(r.Context()); err != nil {
+            handleErr(w, err)
+        }
     })
 }
 ```
 
 **Expected output:**
 ```
-{"time":"...","level":"INFO","msg":"request completed","request_id":"1a2b3c4d","method":"GET","path":"/hello","status":200,"duration_ms":0}
+$ curl -s http://localhost:8080/notes/999
+{"code":"NOT_FOUND","message":"note \"999\" not found"}
 ```
 
-**Checkpoint:** Run `go run .` then `curl http://localhost:8080/hello`. One structured JSON log line appears per request with a unique `request_id`.
+**Checkpoint:** The handler does not write the response directly; the middleware writes it from the error context value.
 
 ---
 
-### Lab 7: Custom Handler — Colourised Development Output
+### Final Lab: Clean Error Layer
 
-**What you'll practise:** Implementing the `slog.Handler` interface to produce human-readable, ANSI-coloured output for local development.
+**What you'll practise:** Wiring sentinels, `AppError`, HTTP status mapping, `errors.Join`, and error middleware into a unified error layer.
 
 **Task:**
-Build a `ColorHandler` that prints records in the format `[LEVEL] message key=value …` with a different colour per level.
+Refactor the Day 22/23 Notes API so that every error flows through the error hierarchy. No handler calls `http.Error` directly. All HTTP status codes are derived from `HTTPStatus`. Input validation uses `errors.Join`.
 
 **Steps:**
-1. Define `ColorHandler` implementing `slog.Handler` (four methods: `Enabled`, `Handle`, `WithAttrs`, `WithGroup`)
-2. Map levels to ANSI colour codes: DEBUG=cyan, INFO=green, WARN=yellow, ERROR=red
-3. Format attributes as `key=value` pairs on the same line
-4. Set it as the global default and log at all four levels to confirm the colours
+1. Define `ErrNotFound`, `ErrConflict`, `ErrValidation` sentinels and the `AppError` type
+2. Replace all `http.Error(w, "...", 404)` calls with `handleErr(w, NotFoundError("note", id))`
+3. Add `validateNote(text string) error` using `errors.Join` for multi-field validation
+4. Write `ErrorMiddleware` that catches `*AppError` from context and writes structured JSON
+5. Write tests asserting exact HTTP status codes for each error type
 
 ```go
-const (
-    colorReset  = "\033[0m"
-    colorCyan   = "\033[36m"
-    colorGreen  = "\033[32m"
-    colorYellow = "\033[33m"
-    colorRed    = "\033[31m"
-)
-
-func levelColor(l slog.Level) string {
-    switch {
-    case l < slog.LevelInfo:  return colorCyan
-    case l < slog.LevelWarn:  return colorGreen
-    case l < slog.LevelError: return colorYellow
-    default:                   return colorRed
+// Test example
+func TestNotFoundReturns404(t *testing.T) {
+    rr := httptest.NewRecorder()
+    req := httptest.NewRequest(http.MethodGet, "/api/notes/9999", nil)
+    router.ServeHTTP(rr, req)
+    if rr.Code != http.StatusNotFound {
+        t.Fatalf("expected 404, got %d", rr.Code)
+    }
+    var body map[string]string
+    json.NewDecoder(rr.Body).Decode(&body)
+    if body["code"] != "NOT_FOUND" {
+        t.Fatalf("expected code NOT_FOUND, got %q", body["code"])
     }
 }
 ```
 
 **Expected output:**
 ```
-[DEBUG] cache miss key=user:42
-[INFO]  server started addr=:8080
-[WARN]  slow query duration_ms=312
-[ERROR] db connection failed err="connection refused"
+$ curl -s http://localhost:8080/api/notes/999
+{"code":"NOT_FOUND","message":"note \"999\" not found"}
+$ curl -s -X POST -d '{"text":""}' http://localhost:8080/api/notes
+{"code":"VALIDATION","message":"validation failed: text is required"}
+$ go test -v ./...
+--- PASS: TestNotFoundReturns404 (0.00s)
+--- PASS: TestValidationReturns400 (0.00s)
+PASS
 ```
-(Each level prefix appears in a distinct colour in a real terminal.)
 
-**Checkpoint:** Run `go run .` and confirm that each level label is rendered in a different colour. Text is readable and attributes appear inline.
+**Checkpoint:** No handler writes directly to `w` on error paths; all error responses have a `code` field; tests cover all three error types.
 
 ---
 
-### Final Lab (Project): Structured Logging with log/slog — Notes API
+## Day Project: Clean Error Layer
 
-**What you'll practise:** Combining a JSON handler, request middleware, and context-scoped logging into a complete HTTP service.
+Refactor the Day 22/23 notes API:
+1. Define `ErrNotFound`, `ErrValidation`, `ErrConflict` sentinels
+2. Create `AppError` with `Code`, `Message`, and wrapped sentinel
+3. Replace `http.Error(w, "...", 404)` calls with `handleErr(w, NotFound("note", id))`
+4. Add input validation in `createNote` / `updateNote`
+5. Write tests that assert correct HTTP status codes for each error type
 
-**Task:**
-Add structured logging to the Notes API from Day 22 using a JSON `slog.Logger`, a `requestLogger` middleware, and per-request logger injection via context.
+Run with: `go run .`
 
-**Steps:**
-1. Initialise a JSON `slog.Logger` in `main`, set as default
-2. Write a `requestLogger` middleware that logs method, path, status, duration, and trace ID
-3. Inject per-request logger into context; use it in handlers
-4. Log at `Info` for successful operations, `Error` for failures (with `"err"` attribute)
-5. Make log level configurable via `LOG_LEVEL` env var
-
-```go
-level := slog.LevelInfo
-if os.Getenv("LOG_LEVEL") == "debug" {
-    level = slog.LevelDebug
-}
-logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-    Level: level,
-}))
-slog.SetDefault(logger)
-```
-
-**Expected output:**
-```
-{"time":"...","level":"INFO","msg":"server started","addr":":8080"}
-{"time":"...","level":"INFO","msg":"request completed","method":"POST","path":"/notes","status":201,"duration_ms":2}
-```
-
-**Checkpoint:** Run `go run .` and `curl -X POST localhost:8080/notes -d '{"title":"test"}'`. One JSON log line appears per request. Running with `LOG_LEVEL=debug go run .` reveals additional debug lines.
-
-**Extension ideas:** implement a custom `slog.Handler` that redacts PII fields; export trace IDs in response headers (`X-Trace-ID`).
+**Extension ideas:** add request ID to error responses by reading from context; log internal errors with full stack via `runtime/debug.Stack()`.
 
 ## Official Documentation
 
-- [`log/slog`](https://pkg.go.dev/log/slog) — `Logger`, `Handler`, `NewJSONHandler`, `NewTextHandler`, `HandlerOptions`, `SetDefault`, `With`, `Info`, `Error`, `Debug`, `Warn`, `LevelInfo`, `LevelDebug`
-- [`context`](https://pkg.go.dev/context) — `WithValue`, `Value` for injecting per-request loggers
-- [`os`](https://pkg.go.dev/os) — `Stdout`, `Getenv` for output target and log level config
-- [`net/http`](https://pkg.go.dev/net/http) — `Handler`, `ResponseWriter`, `Request` used in middleware
-- [`time`](https://pkg.go.dev/time) — `Now`, `Since` for request duration measurement
-- [Go Blog: Structured Logging with slog](https://go.dev/blog/slog) — official introduction to `log/slog`
+- [`errors`](https://pkg.go.dev/errors) — `New`, `Is`, `As`, `Join` (Go 1.20+), `Unwrap`
+- [`net/http`](https://pkg.go.dev/net/http) — `StatusNotFound`, `StatusConflict`, `StatusBadRequest`, `StatusInternalServerError`, `Error`
+- [`fmt`](https://pkg.go.dev/fmt) — `Errorf` with `%w` verb for error wrapping
+- [`runtime/debug`](https://pkg.go.dev/runtime/debug) — `Stack` for capturing stack traces in error logs
+- [Go Blog: Error handling and Go](https://go.dev/blog/error-handling-and-go)
+- [Go Blog: Working with Errors in Go 1.13](https://go.dev/blog/go1.13-errors) — `errors.Is`, `errors.As`, `%w` wrapping
+- [Language Spec — Errors](https://go.dev/ref/spec#Errors)

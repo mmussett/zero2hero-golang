@@ -1,425 +1,403 @@
-# Day 12: Closures and Higher-Order Functions
+# Day 12: Standard Library Collections
 
-## Functions Are First-Class Values
+## Sorting
 
-In Go, functions are values. They can be assigned to variables, passed as arguments, and returned from other functions.
+Go's [`sort`](https://pkg.go.dev/sort) package sorts slices in-place.
 
 ```go
-add := func(a, b int) int { return a + b }
-fmt.Println(add(2, 3)) // 5
+// Concrete helpers
+sort.Ints([]int{3,1,2})
+sort.Strings([]string{"c","a","b"})
 
-func apply(f func(int) int, x int) int { return f(x) }
+// Generic — works on any slice with a comparator
+sort.Slice(people, func(i, j int) bool {
+    return people[i].Age < people[j].Age
+})
+
+// Binary search on sorted slice
+i := sort.SearchInts(sorted, target)
+// i is the insertion point; check sorted[i] == target
+
+// Custom type implementing sort.Interface
+type ByLength []string
+func (b ByLength) Len() int           { return len(b) }
+func (b ByLength) Less(i, j int) bool { return len(b[i]) < len(b[j]) }
+func (b ByLength) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
+sort.Sort(ByLength(words))
 ```
 
-## Closures
+## [container/heap](https://pkg.go.dev/container/heap) — Priority Queue
 
-A closure is a function that captures variables from its enclosing scope:
+Implement `heap.Interface` on a slice:
 
 ```go
-func counter(start int) func() int {
-    n := start
-    return func() int {
-        n++
-        return n
-    }
+type MinIntHeap []int
+func (h MinIntHeap) Len() int           { return len(h) }
+func (h MinIntHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h MinIntHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *MinIntHeap) Push(x any)        { *h = append(*h, x.(int)) }
+func (h *MinIntHeap) Pop() any {
+    old := *h; n := len(old); x := old[n-1]; *h = old[:n-1]; return x
 }
 
-next := counter(0)
-fmt.Println(next()) // 1
-fmt.Println(next()) // 2
+h := &MinIntHeap{3, 1, 4, 1, 5}
+heap.Init(h)
+heap.Push(h, 2)
+fmt.Println(heap.Pop(h)) // 1
 ```
 
-The captured variable `n` is shared between the closure and the outer function — mutations are visible to both.
-
-## Higher-Order Functions
+## [container/list](https://pkg.go.dev/container/list) — Doubly Linked List
 
 ```go
-func Map[T, U any](s []T, f func(T) U) []U { ... }
-func Filter[T any](s []T, keep func(T) bool) []T { ... }
-func Reduce[T, U any](s []T, init U, f func(U, T) U) U { ... }
+l := list.New()
+e1 := l.PushBack("first")
+e2 := l.PushBack("second")
+l.InsertAfter("middle", e1)
+l.Remove(e2)
 
-// Pipeline
-words := []string{"hello", "world", "go", "generics"}
-result := Filter(words, func(w string) bool { return len(w) > 3 })
-upper  := Map(result, strings.ToUpper)
+for e := l.Front(); e != nil; e = e.Next() {
+    fmt.Println(e.Value)
+}
 ```
 
-## Functional Options Pattern
-
-A clean way to handle optional configuration without ever-growing constructor arguments:
+## Graph — Adjacency List
 
 ```go
-type Server struct {
-    host    string
-    port    int
-    timeout time.Duration
+type Graph[T comparable] map[T][]T
+
+func (g Graph[T]) AddEdge(from, to T) {
+    g[from] = append(g[from], to)
 }
 
-type Option func(*Server)
-
-func WithPort(p int) Option              { return func(s *Server) { s.port = p } }
-func WithTimeout(d time.Duration) Option { return func(s *Server) { s.timeout = d } }
-
-func NewServer(host string, opts ...Option) *Server {
-    s := &Server{host: host, port: 8080, timeout: 30 * time.Second}
-    for _, opt := range opts {
-        opt(s)
+func (g Graph[T]) BFS(start T) []T {
+    visited := map[T]bool{start: true}
+    queue   := []T{start}
+    result  := []T{}
+    for len(queue) > 0 {
+        node := queue[0]; queue = queue[1:]
+        result = append(result, node)
+        for _, nb := range g[node] {
+            if !visited[nb] {
+                visited[nb] = true
+                queue = append(queue, nb)
+            }
+        }
     }
-    return s
-}
-
-srv := NewServer("localhost", WithPort(9090), WithTimeout(60*time.Second))
-```
-
-## Memoisation
-
-```go
-func Memoize[K comparable, V any](f func(K) V) func(K) V {
-    cache := make(map[K]V)
-    return func(k K) V {
-        if v, ok := cache[k]; ok { return v }
-        v := f(k); cache[k] = v; return v
-    }
+    return result
 }
 ```
 
 ## Labs
 
-### Lab 1: Closure Basics — Counter
+### Lab 1: Min-Heap with `container/heap`
 
-**What you'll practise:** closures that capture and mutate private state across multiple calls.
+**What you'll practise:** implementing `heap.Interface` on a custom type and using `heap.Init`, `heap.Push`, and `heap.Pop`.
 
 **Task:**
-Write `makeCounter(start int) func() int` — a function that returns a closure. Each call to the returned function increments and returns its private counter. Create two independent counters and confirm they have separate state.
+Create a min-heap of ints. Push 10 random numbers into it, then pop them all and verify they emerge in ascending sorted order.
 
 **Steps:**
-1. Write `makeCounter(start int) func() int` — capture `n := start` in a closure
-2. Return a closure that increments `n` and returns it
-3. In `main`, create `counter1 := makeCounter(0)` and `counter2 := makeCounter(10)`
-4. Call each 3 times and print results to confirm independence
+1. Define `type MinIntHeap []int`
+2. Implement `Len`, `Less`, `Swap`, `Push`, and `Pop` so that `Less(i,j)` returns `h[i] < h[j]`
+3. Call `heap.Init` on an existing slice, then push additional elements with `heap.Push`
+4. Pop all elements into a result slice and check it is sorted
 
 ```go
-func makeCounter(start int) func() int {
-    n := start
-    return func() int {
-        n++
-        return n
-    }
-}
+import "container/heap"
 
-func main() {
-    c1 := makeCounter(0)
-    c2 := makeCounter(10)
-    fmt.Println(c1(), c1(), c1()) // 1 2 3
-    fmt.Println(c2(), c2(), c2()) // 11 12 13
-    fmt.Println(c1())             // 4  (state is independent)
+type MinIntHeap []int
+
+func (h MinIntHeap) Len() int           { return len(h) }
+func (h MinIntHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h MinIntHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *MinIntHeap) Push(x any) { *h = append(*h, x.(int)) }
+
+func (h *MinIntHeap) Pop() any {
+    old := *h; n := len(old)
+    x := old[n-1]; *h = old[:n-1]
+    return x
 }
 ```
 
 **Expected output:**
 ```
-1 2 3
-11 12 13
-4
+Sorted: [1 2 3 4 5 6 7 8 9 10]
 ```
 
-**Checkpoint:** `c1` and `c2` maintain completely separate internal counters; calling one does not affect the other.
+**Checkpoint:** Elements popped from the heap are in non-decreasing order regardless of the push order.
 
 ---
 
-### Lab 2: Memoization
+### Lab 2: Max-Heap — Top-3 Largest
 
-**What you'll practise:** using a closure over a map to cache expensive function results.
+**What you'll practise:** inverting the `Less` comparator to convert a min-heap into a max-heap.
 
 **Task:**
-Write `memoize(f func(int) int) func(int) int` that wraps `f` in a cache. Apply it to a naive recursive fibonacci to confirm calls are cached and the cached version is dramatically faster.
+Create a max-heap by changing only the `Less` method. Use it to find the three largest numbers in a `[]int` without sorting the entire slice.
 
 **Steps:**
-1. Implement `memoize` capturing a `cache map[int]int` in the closure
-2. On each call, check the cache first; if missing, compute and store
-3. Write a naive `fib(n int) int` (recursive, no cache)
-4. Apply `memoize` to it and compare `fib(40)` timing with and without
+1. Define `type MaxIntHeap []int` and implement `heap.Interface` with `Less(i,j)` returning `h[i] > h[j]`
+2. Push all numbers from the input slice into the max-heap via `heap.Push`
+3. Pop three times — the three returned values are the three largest
+4. Verify against the expected top-3
 
 ```go
-func memoize(f func(int) int) func(int) int {
-    cache := make(map[int]int)
-    return func(n int) int {
-        if v, ok := cache[n]; ok {
-            return v
-        }
-        v := f(n)
-        cache[n] = v
-        return v
-    }
+type MaxIntHeap []int
+
+func (h MaxIntHeap) Len() int           { return len(h) }
+func (h MaxIntHeap) Less(i, j int) bool { return h[i] > h[j] } // inverted
+func (h MaxIntHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *MaxIntHeap) Push(x any)        { *h = append(*h, x.(int)) }
+func (h *MaxIntHeap) Pop() any {
+    old := *h; n := len(old)
+    x := old[n-1]; *h = old[:n-1]
+    return x
 }
 
-var memoFib func(int) int
-memoFib = memoize(func(n int) int {
-    if n <= 1 { return n }
-    return memoFib(n-1) + memoFib(n-2)
-})
+nums := []int{3, 1, 4, 1, 5, 9, 2, 6, 5, 3}
+h := MaxIntHeap(append([]int{}, nums...))
+heap.Init(&h)
+top3 := []int{heap.Pop(&h).(int), heap.Pop(&h).(int), heap.Pop(&h).(int)}
 ```
 
 **Expected output:**
 ```
-fib(10) = 55
-fib(40) = 102334155
-memoized fib(40) in < 1ms; naive in seconds
+Top-3: [9 6 5]
 ```
 
-**Checkpoint:** `memoFib(40)` returns the correct value and completes in under 1 ms. The cache is private to the memoized function.
+**Checkpoint:** The result is `[9, 6, 5]` for any ordering of the input. Only three pops are needed regardless of slice size.
 
 ---
 
-### Lab 3: Pipeline Pattern
+### Lab 3: LRU Cache with `container/list`
 
-**What you'll practise:** using functions as first-class values to compose reusable data-transformation stages.
+**What you'll practise:** combining `container/list` for ordering with a `map` for O(1) lookup to build an LRU cache.
 
 **Task:**
-Define `type Stage func([]string) []string` and implement four stages: `Lowercase`, `TrimSpaces`, `RemoveEmpty`, and `Deduplicate`. Write a `Pipeline` function that applies stages in sequence.
+Implement an `LRUCache` with `Get(key string) (string, bool)` and `Set(key, value string)`. The cache has a fixed capacity; setting a new key when full evicts the least-recently-used entry.
 
 **Steps:**
-1. Define the `Stage` type
-2. Implement `Lowercase` using `strings.ToLower`, `TrimSpaces` using `strings.TrimSpace`, `RemoveEmpty` filtering blank strings, and `Deduplicate` preserving first occurrence
-3. Implement `Pipeline(data []string, stages ...Stage) []string`
-4. Test with a messy input slice
+1. Define `type LRUCache struct { cap int; list *list.List; items map[string]*list.Element }`
+2. Each list element stores a `entry{key, value string}` pair
+3. `Get`: if found, move element to front and return value; else return `"", false`
+4. `Set`: if key exists update and move to front; else push to front and evict the back element when over capacity
+5. Write a test: create a capacity-2 cache, set 3 keys, verify the first is evicted
 
 ```go
-type Stage func([]string) []string
+import "container/list"
 
-func Pipeline(data []string, stages ...Stage) []string {
-    for _, s := range stages {
-        data = s(data)
-    }
-    return data
+type entry struct{ key, value string }
+
+type LRUCache struct {
+    cap   int
+    list  *list.List
+    items map[string]*list.Element
 }
 
-func Lowercase(in []string) []string {
-    out := make([]string, len(in))
-    for i, s := range in { out[i] = strings.ToLower(s) }
-    return out
+func NewLRUCache(cap int) *LRUCache {
+    return &LRUCache{cap: cap, list: list.New(), items: make(map[string]*list.Element)}
 }
 
-func RemoveEmpty(in []string) []string {
-    var out []string
-    for _, s := range in {
-        if s != "" { out = append(out, s) }
+func (c *LRUCache) Get(key string) (string, bool) {
+    if el, ok := c.items[key]; ok {
+        c.list.MoveToFront(el)
+        return el.Value.(*entry).value, true
     }
-    return out
+    return "", false
 }
 ```
 
 **Expected output:**
 ```
-Input:  ["  Go ", "RUST", "", "go", "  "]
-Output: [go rust]
+Get("a"): "", false   (evicted)
+Get("b"): "B", true
+Get("c"): "C", true
 ```
 
-**Checkpoint:** The pipeline is composable — any subset of stages can be passed in any order.
+**Checkpoint:** After setting keys a, b, c (capacity 2), `Get("a")` returns `false` and both `Get("b")` and `Get("c")` return their values.
 
 ---
 
-### Lab 4: Functional Options
+### Lab 4: Circular Buffer with `container/ring`
 
-**What you'll practise:** the functional options pattern — building flexible constructors without telescoping parameters.
-
-**Task:**
-Build a `Server` struct with fields `host string`, `port int`, `timeout time.Duration`, and `maxConns int`. Write `WithPort`, `WithTimeout`, `WithMaxConns` option functions. Implement `NewServer(host string, opts ...Option) *Server`.
-
-**Steps:**
-1. Define `type Option func(*Server)`
-2. Implement `WithPort(p int) Option`, `WithTimeout(d time.Duration) Option`, `WithMaxConns(n int) Option` — each returns a closure that modifies a `*Server`
-3. Set sensible defaults in `NewServer` before applying options
-4. Create three servers with different option combinations and print their configs
-
-```go
-type Server struct {
-    host     string
-    port     int
-    timeout  time.Duration
-    maxConns int
-}
-
-type Option func(*Server)
-
-func WithPort(p int) Option              { return func(s *Server) { s.port = p } }
-func WithTimeout(d time.Duration) Option { return func(s *Server) { s.timeout = d } }
-func WithMaxConns(n int) Option          { return func(s *Server) { s.maxConns = n } }
-
-func NewServer(host string, opts ...Option) *Server {
-    s := &Server{host: host, port: 8080, timeout: 30 * time.Second, maxConns: 100}
-    for _, opt := range opts { opt(s) }
-    return s
-}
-```
-
-**Expected output:**
-```
-default: localhost:8080 timeout=30s maxConns=100
-custom:  localhost:9090 timeout=60s maxConns=50
-```
-
-**Checkpoint:** Adding a new option does not change the `NewServer` signature. Calling `NewServer(host)` with no options returns defaults.
-
----
-
-### Lab 5: Generator — `Range`
-
-**What you'll practise:** implementing a lazy sequence generator using a closure to yield values on demand.
+**What you'll practise:** using `container/ring` for a fixed-size circular buffer that overwrites the oldest element.
 
 **Task:**
-Write `Range(from, to int) func() (int, bool)` — a generator that returns successive integers from `from` to `to` inclusive. Each call to the returned function yields the next value and `true`; after exhaustion it returns `0, false`.
+Create a circular buffer of capacity 5 using `ring.New(5)`. Write 10 values into it and show that only the last 5 survive. Then implement a sliding-window maximum over a stream of integers.
 
 **Steps:**
-1. Implement `Range` capturing `current := from` in a closure
-2. Each invocation: if `current > to`, return `0, false`; otherwise return `current, true` and increment
-3. In `main`, drive the generator with a `for` loop using the comma-ok idiom
-4. Compose two generators: use one to generate indices into a string slice
+1. Create `r := ring.New(5)` — a ring of 5 elements
+2. Write values 1–10 into it, advancing `r = r.Next()` on each write
+3. After all writes, iterate the ring with `r.Do` and print surviving values
+4. Reset and implement `slidingMax(nums []int, k int) []int` using the ring to track a window
 
 ```go
-func Range(from, to int) func() (int, bool) {
-    current := from
-    return func() (int, bool) {
-        if current > to {
-            return 0, false
-        }
-        v := current
-        current++
-        return v, true
-    }
+import "container/ring"
+
+r := ring.New(5)
+for i := 1; i <= 10; i++ {
+    r.Value = i
+    r = r.Next()
 }
 
-gen := Range(1, 5)
-for v, ok := gen(); ok; v, ok = gen() {
+// Print surviving values (6,7,8,9,10):
+r.Do(func(v any) {
     fmt.Println(v)
-}
-```
-
-**Expected output:**
-```
-1
-2
-3
-4
-5
-```
-
-**Checkpoint:** The generator yields exactly `to - from + 1` values and then consistently returns `0, false`.
-
----
-
-### Lab 6: Lazy Initialisation with `sync.Once`
-
-**What you'll practise:** combining closures with `sync.Once` to build a thread-safe lazy value that is computed at most once.
-
-**Task:**
-Implement `type Lazy[T any] struct` with a `Get() T` method that calls a user-supplied `compute func() T` exactly once, caching the result for all subsequent calls.
-
-**Steps:**
-1. Define `type Lazy[T any] struct { once sync.Once; value T; compute func() T }`
-2. Implement `NewLazy[T any](f func() T) *Lazy[T]` storing `f` in the struct
-3. Implement `Get() T` calling `l.once.Do(func() { l.value = l.compute() })` then returning `l.value`
-4. Verify with a compute function that prints a message — confirm it prints exactly once even with multiple `Get` calls
-
-```go
-import "sync"
-
-type Lazy[T any] struct {
-    once    sync.Once
-    value   T
-    compute func() T
-}
-
-func NewLazy[T any](f func() T) *Lazy[T] {
-    return &Lazy[T]{compute: f}
-}
-
-func (l *Lazy[T]) Get() T {
-    l.once.Do(func() { l.value = l.compute() })
-    return l.value
-}
-
-config := NewLazy(func() string {
-    fmt.Println("computing config...") // prints once
-    return "host=localhost port=8080"
 })
-fmt.Println(config.Get())
-fmt.Println(config.Get()) // no "computing config..." again
 ```
 
 **Expected output:**
 ```
-computing config...
-host=localhost port=8080
-host=localhost port=8080
+Ring contents after 10 writes: [6 7 8 9 10]
 ```
 
-**Checkpoint:** The compute function is called exactly once regardless of how many times `Get` is called, including concurrent calls.
+**Checkpoint:** After writing values 1–10 to a capacity-5 ring, exactly values 6–10 remain.
 
 ---
 
-### Final Lab (Project): Data Pipeline
+### Lab 5: Graph — BFS Shortest Path
 
-**What you'll practise:** combining closures, higher-order functions, the pipeline pattern, and functional options into a production-quality data processing component.
+**What you'll practise:** representing a graph with an adjacency list and implementing BFS to find the shortest path between two nodes.
 
 **Task:**
-Build a pipeline that processes a slice of strings through composable stages. Add functional options for pipeline configuration.
+Define `type Graph map[string][]string`. Add `AddEdge`, `Neighbours`, and `BFS(start, end string) []string` returning the shortest path as a node slice.
 
 **Steps:**
-1. Define `type Stage func([]string) []string` and `Pipeline(data []string, stages ...Stage) []string`
-2. Implement stages: `Lowercase`, `RemoveEmpty`, `Deduplicate`, `TrimSpaces`, `FilterMinLength(n int) Stage`
-3. Use the functional options pattern for a `PipelineConfig` that controls whether to log each stage's output size
-4. Wire all labs together: use `makeCounter` to number processed batches, `memoize` to cache expensive stage results
+1. Implement `AddEdge(from, to string)` — directed edge (also add reverse for undirected)
+2. Implement `BFS` using a queue and a `prev map[string]string` to reconstruct the path
+3. Build a test graph: A→B, A→C, B→D, C→D, D→E
+4. Find the shortest path from A to E and verify it is length 3 (A→B→D→E or A→C→D→E)
 
 ```go
-type Stage func([]string) []string
+type Graph map[string][]string
 
-func Pipeline(data []string, stages ...Stage) []string {
-    for _, s := range stages {
-        data = s(data)
-    }
-    return data
+func (g Graph) AddEdge(from, to string) {
+    g[from] = append(g[from], to)
 }
 
-// FilterMinLength returns a Stage — a closure over n
-func FilterMinLength(n int) Stage {
-    return func(in []string) []string {
-        var out []string
-        for _, s := range in {
-            if len(s) >= n {
-                out = append(out, s)
+func (g Graph) BFS(start, end string) []string {
+    prev := map[string]string{start: ""}
+    queue := []string{start}
+    for len(queue) > 0 {
+        node := queue[0]; queue = queue[1:]
+        if node == end {
+            return buildPath(prev, start, end)
+        }
+        for _, nb := range g[node] {
+            if _, seen := prev[nb]; !seen {
+                prev[nb] = node
+                queue = append(queue, nb)
             }
         }
-        return out
     }
+    return nil // no path
 }
-
-result := Pipeline(
-    []string{"  Go ", "RUST", "", "go", "PYTHON", "  "},
-    TrimSpaces,
-    Lowercase,
-    RemoveEmpty,
-    Deduplicate,
-    FilterMinLength(3),
-)
-fmt.Println(result)
 ```
 
 **Expected output:**
 ```
-[rust python]
+BFS A→E: [A B D E]
+BFS A→C: [A C]
+BFS E→A: []  (directed — no path)
 ```
 
-**Checkpoint:** `go test ./...` passes; every stage is independently testable; adding or removing stages from the `Pipeline` call requires no other changes.
+**Checkpoint:** `BFS` returns the path with the fewest hops. Unreachable nodes return `nil`.
 
-**Extension ideas:** make `Stage` operate on `chan string` for streaming; add error propagation.
+---
+
+### Lab 6: DFS and `HasPath`
+
+**What you'll practise:** recursive DFS traversal and cycle detection using a visited set.
+
+**Task:**
+Add `DFS(start string) []string` returning nodes in DFS traversal order, and `HasPath(from, to string) bool` that returns true if any path exists between two nodes.
+
+**Steps:**
+1. Implement `DFS` recursively, tracking visited nodes in a `map[string]bool`
+2. Implement `HasPath` using DFS or BFS — return true as soon as `to` is reached
+3. Use the same A→B, A→C, B→D, C→D, D→E graph
+4. Add a cycle (E→A) and verify DFS terminates without infinite recursion
+
+```go
+func (g Graph) DFS(start string) []string {
+    var result []string
+    visited := make(map[string]bool)
+    var dfs func(node string)
+    dfs = func(node string) {
+        if visited[node] { return }
+        visited[node] = true
+        result = append(result, node)
+        for _, nb := range g[node] {
+            dfs(nb)
+        }
+    }
+    dfs(start)
+    return result
+}
+
+func (g Graph) HasPath(from, to string) bool {
+    return g.BFS(from, to) != nil
+}
+```
+
+**Expected output:**
+```
+DFS from A: [A B D E C]
+HasPath(A, E): true
+HasPath(E, B): false
+```
+
+**Checkpoint:** `DFS` visits every reachable node exactly once; adding a cycle (E→A) does not cause infinite recursion.
+
+---
+
+### Final Lab (Project): Data Structures Library
+
+**What you'll practise:** combining all six labs into a tested, production-quality data structures library with a min-heap, LRU cache, and a BFS/DFS graph.
+
+**Task:**
+Implement and test the full data structures library. Each structure should have its own file and comprehensive tests.
+
+**Steps:**
+1. Implement a min-heap priority queue wrapping [`container/heap`](https://pkg.go.dev/container/heap)
+2. Implement an LRU cache using [`container/list`](https://pkg.go.dev/container/list) + `map` (O(1) `Get` and `Set`)
+3. Implement a generic `Graph[T comparable]` with `AddEdge`, `BFS`, `DFS`, `HasPath`
+4. Write table-driven tests for each data structure
+
+```go
+// Example usage in main:
+h := &MinIntHeap{5, 3, 8, 1}
+heap.Init(h)
+fmt.Println(heap.Pop(h)) // 1
+
+cache := NewLRUCache(3)
+cache.Set("x", "10")
+v, _ := cache.Get("x")
+fmt.Println(v) // 10
+
+g := make(Graph[string])
+g.AddEdge("A", "B"); g.AddEdge("B", "C")
+fmt.Println(g.BFS("A", "C")) // [A B C]
+```
+
+**Expected output:**
+```
+MinHeap pop sequence: 1 3 5 8
+LRU eviction works correctly
+BFS path: [A B C]
+DFS traversal: [A B C]
+```
+
+**Checkpoint:** `go test ./...` passes; all three data structures have at least 3 test cases each; `go vet ./...` is clean.
+
+**Extension ideas:** implement Dijkstra's shortest-path on a weighted graph using `container/heap`.
 
 ## Official Documentation
 
-- [`strings`](https://pkg.go.dev/strings) — `ToUpper` and other functions used in pipeline stages
+- [`sort`](https://pkg.go.dev/sort) — Ints, Strings, Slice, Sort, SearchInts, sort.Interface
+- [`container/heap`](https://pkg.go.dev/container/heap) — heap.Interface, Init, Push, Pop
+- [`container/list`](https://pkg.go.dev/container/list) — doubly linked list operations
+- [`container/ring`](https://pkg.go.dev/container/ring) — circular list (related container)
 - [`fmt`](https://pkg.go.dev/fmt) — formatted output
-- [Language Spec: Function literals](https://go.dev/ref/spec#Function_literals) — closure syntax
-- [Language Spec: Variadic functions](https://go.dev/ref/spec#Passing_arguments_to_..._parameters) — `...Option` variadic parameters
-- [Effective Go: Functions](https://go.dev/doc/effective_go#functions) — first-class functions
-- [Go Blog: Functional options for friendly APIs](https://go.dev/blog/functional-options-for-friendly-apis) — functional options pattern (Dave Cheney)
-- [Go Tour: Closures](https://go.dev/tour/moretypes/25) — interactive closure tour
+- [Go Blog: The Go Programming Language Specification — Generics](https://go.dev/blog/intro-generics) — for the generic Graph type

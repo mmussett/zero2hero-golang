@@ -1,116 +1,109 @@
 package main
 
 import (
-	"bufio"
-	"context"
+	"container/list"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"os"
-	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
 )
 
-func downloadURL(ctx context.Context, url string) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return 0, fmt.Errorf("create request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	n, err := io.Copy(io.Discard, resp.Body)
-	return n, err
+type cacheEntry struct {
+	key string
+	val any
 }
 
-func downloadAll(ctx context.Context, urls []string) {
-	var wg sync.WaitGroup
-	for _, url := range urls {
-		wg.Add(1)
-		go func(u string) {
-			defer wg.Done()
-			start := time.Now()
-			n, err := downloadURL(ctx, u)
-			if err != nil {
-				if ctx.Err() != nil {
-					fmt.Printf("  CANCELLED  %s\n", u)
-				} else {
-					fmt.Printf("  ERROR      %s: %v\n", u, err)
-				}
-				return
-			}
-			fmt.Printf("  OK  %6d bytes  %v  %s\n", n, time.Since(start).Round(time.Millisecond), u)
-		}(url)
-	}
-	wg.Wait()
+type LRUCache struct {
+	mu     sync.RWMutex
+	cap    int
+	list   *list.List
+	items  map[string]*list.Element
+	hits   atomic.Int64
+	misses atomic.Int64
 }
 
-func startEchoServer(ctx context.Context, addr string) error {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
+func NewLRUCache(cap int) *LRUCache {
+	return &LRUCache{
+		cap:   cap,
+		list:  list.New(),
+		items: make(map[string]*list.Element),
 	}
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
+}
 
-	fmt.Printf("Echo server listening on %s\n", addr)
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
+func (c *LRUCache) Get(key string) (any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[key]; ok {
+		c.list.MoveToFront(el)
+		c.hits.Add(1)
+		return el.Value.(*cacheEntry).val, true
+	}
+	c.misses.Add(1)
+	return nil, false
+}
+
+func (c *LRUCache) Put(key string, val any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[key]; ok {
+		c.list.MoveToFront(el)
+		el.Value.(*cacheEntry).val = val
+		return
+	}
+	if c.list.Len() == c.cap {
+		back := c.list.Back()
+		if back != nil {
+			c.list.Remove(back)
+			delete(c.items, back.Value.(*cacheEntry).key)
 		}
-		go func(c net.Conn) {
-			defer c.Close()
-			scanner := bufio.NewScanner(c)
-			for scanner.Scan() {
-				fmt.Fprintln(c, strings.ToUpper(scanner.Text()))
-			}
-		}(conn)
 	}
+	el := c.list.PushFront(&cacheEntry{key, val})
+	c.items[key] = el
+}
+
+func (c *LRUCache) Stats() (hits, misses int64) {
+	return c.hits.Load(), c.misses.Load()
+}
+
+func (c *LRUCache) Len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.list.Len()
 }
 
 func main() {
-	fmt.Println("=== Cancellable HTTP Downloader (5s timeout) ===")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	cache := NewLRUCache(3)
 
-	urls := []string{
-		"https://httpbin.org/get",
-		"https://httpbin.org/delay/2",
-		"https://httpbin.org/bytes/1024",
+	ops := []struct {
+		op  string
+		key string
+		val any
+	}{
+		{"put", "a", "apple"},
+		{"put", "b", "banana"},
+		{"put", "c", "cherry"},
+		{"get", "a", nil},          // hit — a moves to front
+		{"put", "d", "date"},       // evicts b (LRU)
+		{"get", "b", nil},          // miss — b was evicted
+		{"get", "c", nil},          // hit
+		{"put", "e", "elderberry"}, // evicts a (LRU)
+		{"get", "a", nil},          // miss
 	}
-	downloadAll(ctx, urls)
 
-	fmt.Println("\n=== TCP Echo Server ===")
-	srvCtx, srvCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer srvCancel()
-
-	go startEchoServer(srvCtx, "127.0.0.1:9999")
-	time.Sleep(100 * time.Millisecond)
-
-	conn, err := net.Dial("tcp", "127.0.0.1:9999")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "dial error: %v\n", err)
-		return
+	for _, op := range ops {
+		switch op.op {
+		case "put":
+			cache.Put(op.key, op.val)
+			fmt.Printf("PUT %-4q = %-12v (size=%d)\n", op.key, op.val, cache.Len())
+		case "get":
+			if v, ok := cache.Get(op.key); ok {
+				fmt.Printf("GET %-4q → %-12v (hit)\n", op.key, v)
+			} else {
+				fmt.Printf("GET %-4q → (miss)\n", op.key)
+			}
+		}
 	}
-	defer conn.Close()
 
-	for _, msg := range []string{"hello", "world", "go is great"} {
-		fmt.Fprintln(conn, msg)
-		buf := make([]byte, 256)
-		n, _ := conn.Read(buf)
-		fmt.Printf("sent: %q  got: %q\n", msg, strings.TrimSpace(string(buf[:n])))
-	}
+	hits, misses := cache.Stats()
+	fmt.Printf("\nStats: %d hits, %d misses (%.0f%% hit rate)\n",
+		hits, misses, float64(hits)/float64(hits+misses)*100)
 }

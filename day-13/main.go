@@ -3,46 +3,143 @@ package main
 import (
 	"fmt"
 	"strings"
-	"unicode"
 )
 
-func Add(a, b float64) float64 { return a + b }
-func Sub(a, b float64) float64 { return a - b }
-func Mul(a, b float64) float64 { return a * b }
-func Div(a, b float64) (float64, error) {
-	if b == 0 {
-		return 0, fmt.Errorf("division by zero")
+type Stage func([]string) []string
+
+func Pipeline(data []string, stages ...Stage) []string {
+	for _, s := range stages {
+		data = s(data)
 	}
-	return a / b, nil
+	return data
 }
 
-func WordFrequency(text string) map[string]int {
-	freq := make(map[string]int)
-	clean := strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsSpace(r) {
-			return unicode.ToLower(r)
+func Lowercase() Stage {
+	return func(data []string) []string {
+		result := make([]string, len(data))
+		for i, s := range data {
+			result[i] = strings.ToLower(s)
 		}
-		return ' '
-	}, text)
-	for _, w := range strings.Fields(clean) {
-		freq[w]++
+		return result
 	}
-	return freq
 }
 
-func IsPalindrome(s string) bool {
-	s = strings.ToLower(strings.TrimSpace(s))
-	runes := []rune(s)
-	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
-		if runes[i] != runes[j] {
-			return false
+func TrimSpaces() Stage {
+	return func(data []string) []string {
+		result := make([]string, len(data))
+		for i, s := range data {
+			result[i] = strings.TrimSpace(s)
 		}
+		return result
 	}
-	return true
+}
+
+func RemoveEmpty() Stage {
+	return func(data []string) []string {
+		result := make([]string, 0, len(data))
+		for _, s := range data {
+			if s != "" {
+				result = append(result, s)
+			}
+		}
+		return result
+	}
+}
+
+func Deduplicate() Stage {
+	return func(data []string) []string {
+		seen := make(map[string]bool)
+		result := make([]string, 0, len(data))
+		for _, s := range data {
+			if !seen[s] {
+				seen[s] = true
+				result = append(result, s)
+			}
+		}
+		return result
+	}
+}
+
+func FilterMinLength(n int) Stage {
+	return func(data []string) []string {
+		result := make([]string, 0)
+		for _, s := range data {
+			if len([]rune(s)) >= n {
+				result = append(result, s)
+			}
+		}
+		return result
+	}
+}
+
+func Replace(old, new string) Stage {
+	return func(data []string) []string {
+		result := make([]string, len(data))
+		for i, s := range data {
+			result[i] = strings.ReplaceAll(s, old, new)
+		}
+		return result
+	}
+}
+
+type ProcessorConfig struct {
+	minLength int
+	dedupe    bool
+	prefix    string
+}
+
+type ProcessorOption func(*ProcessorConfig)
+
+func WithMinLength(n int) ProcessorOption { return func(c *ProcessorConfig) { c.minLength = n } }
+func WithDedup() ProcessorOption          { return func(c *ProcessorConfig) { c.dedupe = true } }
+func WithPrefix(p string) ProcessorOption { return func(c *ProcessorConfig) { c.prefix = p } }
+
+func NewProcessor(opts ...ProcessorOption) func([]string) []string {
+	cfg := &ProcessorConfig{minLength: 1}
+	for _, o := range opts {
+		o(cfg)
+	}
+	return func(data []string) []string {
+		stages := []Stage{TrimSpaces(), RemoveEmpty(), Lowercase()}
+		if cfg.minLength > 1 {
+			stages = append(stages, FilterMinLength(cfg.minLength))
+		}
+		if cfg.dedupe {
+			stages = append(stages, Deduplicate())
+		}
+		result := Pipeline(data, stages...)
+		if cfg.prefix != "" {
+			for i, s := range result {
+				result[i] = cfg.prefix + s
+			}
+		}
+		return result
+	}
 }
 
 func main() {
-	fmt.Println("Day 13: run `go test ./...` to see the test suite in action")
-	fmt.Printf("Add(2, 3)             = %.1f\n", Add(2, 3))
-	fmt.Printf("IsPalindrome(racecar) = %v\n", IsPalindrome("racecar"))
+	input := []string{
+		"  Hello  ", "world", "HELLO", "Go", "  ", "", "go",
+		"generics", "world", "interfaces", "Go", "channels",
+	}
+
+	fmt.Println("Input:", input)
+	fmt.Println()
+
+	result := Pipeline(input,
+		TrimSpaces(),
+		RemoveEmpty(),
+		Lowercase(),
+		Deduplicate(),
+		FilterMinLength(3),
+	)
+	fmt.Println("After pipeline:", result)
+
+	fmt.Println("\n=== Functional Options Processor ===")
+	process := NewProcessor(
+		WithMinLength(4),
+		WithDedup(),
+		WithPrefix("→ "),
+	)
+	fmt.Println("Processed:", process(input))
 }

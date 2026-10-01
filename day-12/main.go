@@ -1,145 +1,167 @@
 package main
 
 import (
+	"container/heap"
+	"container/list"
 	"fmt"
-	"strings"
 )
 
-type Stage func([]string) []string
+// ── Min-Heap Priority Queue ──────────────────────────────────────────────────
 
-func Pipeline(data []string, stages ...Stage) []string {
-	for _, s := range stages {
-		data = s(data)
-	}
-	return data
+type MinHeap []int
+
+func (h MinHeap) Len() int           { return len(h) }
+func (h MinHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h MinHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *MinHeap) Push(x any)        { *h = append(*h, x.(int)) }
+func (h *MinHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
 }
 
-func Lowercase() Stage {
-	return func(data []string) []string {
-		result := make([]string, len(data))
-		for i, s := range data {
-			result[i] = strings.ToLower(s)
-		}
-		return result
+// ── LRU Cache ────────────────────────────────────────────────────────────────
+
+type lruEntry struct{ key, val string }
+
+type LRUCache struct {
+	cap   int
+	list  *list.List
+	items map[string]*list.Element
+}
+
+func NewLRU(cap int) *LRUCache {
+	return &LRUCache{
+		cap:   cap,
+		list:  list.New(),
+		items: make(map[string]*list.Element),
 	}
 }
 
-func TrimSpaces() Stage {
-	return func(data []string) []string {
-		result := make([]string, len(data))
-		for i, s := range data {
-			result[i] = strings.TrimSpace(s)
-		}
-		return result
+func (c *LRUCache) Get(key string) (string, bool) {
+	if el, ok := c.items[key]; ok {
+		c.list.MoveToFront(el)
+		return el.Value.(*lruEntry).val, true
 	}
+	return "", false
 }
 
-func RemoveEmpty() Stage {
-	return func(data []string) []string {
-		result := make([]string, 0, len(data))
-		for _, s := range data {
-			if s != "" {
-				result = append(result, s)
+func (c *LRUCache) Put(key, val string) {
+	if el, ok := c.items[key]; ok {
+		c.list.MoveToFront(el)
+		el.Value.(*lruEntry).val = val
+		return
+	}
+	if c.list.Len() == c.cap {
+		back := c.list.Back()
+		c.list.Remove(back)
+		delete(c.items, back.Value.(*lruEntry).key)
+	}
+	el := c.list.PushFront(&lruEntry{key, val})
+	c.items[key] = el
+}
+
+// ── Graph with BFS / DFS / HasPath ──────────────────────────────────────────
+
+type Graph map[string][]string
+
+func (g Graph) AddEdge(from, to string) {
+	g[from] = append(g[from], to)
+	g[to] = append(g[to], from)
+}
+
+func (g Graph) BFS(start string) []string {
+	visited := map[string]bool{start: true}
+	queue := []string{start}
+	var order []string
+	for len(queue) > 0 {
+		node := queue[0]
+		queue = queue[1:]
+		order = append(order, node)
+		for _, nb := range g[node] {
+			if !visited[nb] {
+				visited[nb] = true
+				queue = append(queue, nb)
 			}
 		}
-		return result
 	}
+	return order
 }
 
-func Deduplicate() Stage {
-	return func(data []string) []string {
-		seen := make(map[string]bool)
-		result := make([]string, 0, len(data))
-		for _, s := range data {
-			if !seen[s] {
-				seen[s] = true
-				result = append(result, s)
+func (g Graph) DFS(start string) []string {
+	var order []string
+	visited := map[string]bool{}
+	var dfs func(n string)
+	dfs = func(n string) {
+		visited[n] = true
+		order = append(order, n)
+		for _, nb := range g[n] {
+			if !visited[nb] {
+				dfs(nb)
 			}
 		}
-		return result
 	}
+	dfs(start)
+	return order
 }
 
-func FilterMinLength(n int) Stage {
-	return func(data []string) []string {
-		result := make([]string, 0)
-		for _, s := range data {
-			if len([]rune(s)) >= n {
-				result = append(result, s)
+func (g Graph) HasPath(from, to string) bool {
+	visited := map[string]bool{}
+	var dfs func(n string) bool
+	dfs = func(n string) bool {
+		if n == to {
+			return true
+		}
+		visited[n] = true
+		for _, nb := range g[n] {
+			if !visited[nb] && dfs(nb) {
+				return true
 			}
 		}
-		return result
+		return false
 	}
-}
-
-func Replace(old, new string) Stage {
-	return func(data []string) []string {
-		result := make([]string, len(data))
-		for i, s := range data {
-			result[i] = strings.ReplaceAll(s, old, new)
-		}
-		return result
-	}
-}
-
-type ProcessorConfig struct {
-	minLength int
-	dedupe    bool
-	prefix    string
-}
-
-type ProcessorOption func(*ProcessorConfig)
-
-func WithMinLength(n int) ProcessorOption { return func(c *ProcessorConfig) { c.minLength = n } }
-func WithDedup() ProcessorOption          { return func(c *ProcessorConfig) { c.dedupe = true } }
-func WithPrefix(p string) ProcessorOption { return func(c *ProcessorConfig) { c.prefix = p } }
-
-func NewProcessor(opts ...ProcessorOption) func([]string) []string {
-	cfg := &ProcessorConfig{minLength: 1}
-	for _, o := range opts {
-		o(cfg)
-	}
-	return func(data []string) []string {
-		stages := []Stage{TrimSpaces(), RemoveEmpty(), Lowercase()}
-		if cfg.minLength > 1 {
-			stages = append(stages, FilterMinLength(cfg.minLength))
-		}
-		if cfg.dedupe {
-			stages = append(stages, Deduplicate())
-		}
-		result := Pipeline(data, stages...)
-		if cfg.prefix != "" {
-			for i, s := range result {
-				result[i] = cfg.prefix + s
-			}
-		}
-		return result
-	}
+	return dfs(from)
 }
 
 func main() {
-	input := []string{
-		"  Hello  ", "world", "HELLO", "Go", "  ", "", "go",
-		"generics", "world", "interfaces", "Go", "channels",
+	// Min-heap
+	fmt.Println("=== Min-Heap ===")
+	h := &MinHeap{5, 3, 8, 1, 9, 2}
+	heap.Init(h)
+	heap.Push(h, 4)
+	for h.Len() > 0 {
+		fmt.Printf("%d ", heap.Pop(h))
 	}
-
-	fmt.Println("Input:", input)
 	fmt.Println()
 
-	result := Pipeline(input,
-		TrimSpaces(),
-		RemoveEmpty(),
-		Lowercase(),
-		Deduplicate(),
-		FilterMinLength(3),
-	)
-	fmt.Println("After pipeline:", result)
+	// LRU cache
+	fmt.Println("\n=== LRU Cache (capacity 3) ===")
+	lru := NewLRU(3)
+	lru.Put("a", "apple")
+	lru.Put("b", "banana")
+	lru.Put("c", "cherry")
+	lru.Get("a")        // moves a to front; b becomes LRU
+	lru.Put("d", "date") // evicts b
+	for _, k := range []string{"a", "b", "c", "d"} {
+		if v, ok := lru.Get(k); ok {
+			fmt.Printf("  %s → %s\n", k, v)
+		} else {
+			fmt.Printf("  %s → (evicted)\n", k)
+		}
+	}
 
-	fmt.Println("\n=== Functional Options Processor ===")
-	process := NewProcessor(
-		WithMinLength(4),
-		WithDedup(),
-		WithPrefix("→ "),
-	)
-	fmt.Println("Processed:", process(input))
+	// Graph
+	fmt.Println("\n=== Graph ===")
+	g := Graph{}
+	g.AddEdge("A", "B")
+	g.AddEdge("A", "C")
+	g.AddEdge("B", "D")
+	g.AddEdge("C", "D")
+	g.AddEdge("D", "E")
+	fmt.Printf("BFS from A: %v\n", g.BFS("A"))
+	fmt.Printf("DFS from A: %v\n", g.DFS("A"))
+	fmt.Printf("Path A→E:  %v\n", g.HasPath("A", "E"))
+	fmt.Printf("Path E→A:  %v\n", g.HasPath("E", "A"))
 }

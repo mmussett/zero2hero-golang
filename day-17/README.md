@@ -1,439 +1,482 @@
-# Day 17: Context
+# Day 17: Sync Primitives
 
-## Core Concept: Propagate Cancellation, Not Panics
+## Core Concept: Shared Memory Requires Explicit Synchronisation
 
-[`context.Context`](https://pkg.go.dev/context#Context) carries deadlines, cancellation signals, and request-scoped values across API boundaries and goroutines. Pass it as the **first argument** to every function that does I/O or blocks.
+Channels are great for ownership transfer and signalling. When goroutines genuinely need to share mutable state, reach for the [`sync`](https://pkg.go.dev/sync) package.
+
+## [sync.Mutex](https://pkg.go.dev/sync#Mutex)
 
 ```go
-func doWork(ctx context.Context, url string) error {
-    req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-    if err != nil { return err }
-    resp, err := http.DefaultClient.Do(req)
-    // if ctx is cancelled, err will be context.Canceled or context.DeadlineExceeded
-    ...
+type SafeCounter struct {
+    mu sync.Mutex
+    n  int
+}
+
+func (c *SafeCounter) Inc() {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.n++
+}
+
+func (c *SafeCounter) Value() int {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return c.n
 }
 ```
 
-## Creating Contexts
+Always `defer mu.Unlock()` immediately after `Lock()` — even if the function panics, the mutex will be released.
+
+## [sync.RWMutex](https://pkg.go.dev/sync#RWMutex)
+
+Allows multiple concurrent readers or one writer — better throughput for read-heavy workloads:
 
 ```go
-ctx := context.Background()             // root context — never nil, never cancelled
+var mu sync.RWMutex
 
-// Cancellable
-ctx, cancel := context.WithCancel(ctx)
-defer cancel()                          // always call cancel to free resources
+func read() {
+    mu.RLock()
+    defer mu.RUnlock()
+    // concurrent reads are safe
+}
 
-// Timeout
-ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-defer cancel()
-
-// Absolute deadline
-ctx, cancel := context.WithDeadline(ctx, time.Now().Add(5*time.Second))
-defer cancel()
-
-// Values (request-scoped data)
-type ctxKey string
-ctx = context.WithValue(ctx, ctxKey("traceID"), "abc-123")
-id := ctx.Value(ctxKey("traceID")).(string)
-```
-
-Use unexported struct or named string types as context keys to avoid collisions.
-
-## Checking Cancellation
-
-```go
-select {
-case <-ctx.Done():
-    return ctx.Err()  // context.Canceled or context.DeadlineExceeded
-case result := <-workCh:
-    return result
+func write() {
+    mu.Lock()
+    defer mu.Unlock()
+    // exclusive write
 }
 ```
 
-Or in a loop:
+## [sync.WaitGroup](https://pkg.go.dev/sync#WaitGroup)
+
+Wait for a collection of goroutines to finish:
 
 ```go
-for {
-    if err := ctx.Err(); err != nil { return err }
-    // ... do a unit of work
+var wg sync.WaitGroup
+for i := 0; i < 10; i++ {
+    wg.Add(1)
+    go func(id int) {
+        defer wg.Done()
+        doWork(id)
+    }(i)
+}
+wg.Wait()
+```
+
+Always call `Add` before launching the goroutine, never inside it.
+
+## [sync.Once](https://pkg.go.dev/sync#Once)
+
+Run an initialisation exactly once, regardless of how many goroutines call it:
+
+```go
+var (
+    instance *DB
+    once     sync.Once
+)
+
+func GetDB() *DB {
+    once.Do(func() {
+        instance = connect()
+    })
+    return instance
 }
 ```
 
-## TCP Echo Server
+## [sync/atomic](https://pkg.go.dev/sync/atomic)
+
+Low-level, lock-free operations on primitive integers and pointers:
 
 ```go
-listener, err := net.Listen("tcp", ":8080")
-// ...
-for {
-    conn, err := listener.Accept()
-    go handleConn(ctx, conn)
-}
-
-func handleConn(ctx context.Context, conn net.Conn) {
-    defer conn.Close()
-    // Watch for ctx cancellation alongside conn I/O
-}
+var hits int64
+atomic.AddInt64(&hits, 1)
+n := atomic.LoadInt64(&hits)
 ```
+
+Use `atomic` only for simple counters and flags — prefer `Mutex` for anything more complex.
+
+## Race Detector
+
+Always run tests with `-race` during development:
+
+```bash
+go test -race ./...
+go run -race main.go
+```
+
+The race detector catches concurrent access to unprotected shared data.
 
 ## Labs
 
-### Lab 1: context.Background and context.TODO
+### Lab 1: Race Condition — Bare Counter
 
-**What you'll practise:** Understanding the two root context constructors and when to use each.
-
-**Task:**
-Create both `context.Background()` and `context.TODO()`, print their `String()` representations, and experiment with their `Done()`, `Err()`, and `Deadline()` methods. Understand when each is appropriate.
-
-**Steps:**
-1. Call `ctx := context.Background()` and print `ctx` — observe the output
-2. Call `ctx := context.TODO()` and print `ctx`
-3. Try `ctx.Done()` — it returns `nil` for both; try to receive on it and observe it blocks forever
-4. Write a comment explaining: Background = top-level main/test; TODO = placeholder during refactoring
-
-```go
-bg := context.Background()
-todo := context.TODO()
-
-fmt.Println(bg)           // context.background
-fmt.Println(todo)         // context.todo
-fmt.Println(bg.Err())     // <nil>
-fmt.Println(bg.Done())    // <nil> (never cancelled)
-
-deadline, ok := bg.Deadline()
-fmt.Println(deadline, ok) // 0001-01-01 00:00:00 +0000 UTC false
-```
-
-**Expected output:**
-```
-context.background
-context.todo
-<nil>
-<nil>
-0001-01-01 00:00:00 +0000 UTC false
-```
-
-**Checkpoint:** Both print correctly and neither `Done()` channel is readable (they are `nil`).
-
----
-
-### Lab 2: context.WithCancel — Manual Cancellation
-
-**What you'll practise:** Deriving a cancellable child context and observing the `Done` channel close.
+**What you'll practise:** Witnessing a data race that the race detector catches.
 
 **Task:**
-Create a parent context, derive a child with `WithCancel`, launch a goroutine that blocks on `ctx.Done()`, call `cancel()`, and confirm the goroutine exits with `ctx.Err() == context.Canceled`.
+Increment a shared `int` counter from 100 goroutines without any synchronisation. Run with `go test -race` and observe the race report. Note the exact lines flagged.
 
 **Steps:**
-1. `parent := context.Background()`
-2. `ctx, cancel := context.WithCancel(parent)`
-3. Launch a goroutine: `select { case <-ctx.Done(): fmt.Println(ctx.Err()) }`
-4. Sleep 100ms, call `cancel()`, wait for goroutine, confirm error is `context.Canceled`
+1. Declare `var counter int` at package level (or closure-captured)
+2. Launch 100 goroutines each doing `counter++` 1 000 times
+3. Wait for all with `sync.WaitGroup`, print `counter`
+4. Run `go run -race main.go` and read the DATA RACE report
 
 ```go
-ctx, cancel := context.WithCancel(context.Background())
-defer cancel()
-
+var counter int
 var wg sync.WaitGroup
-wg.Add(1)
-go func() {
-    defer wg.Done()
-    <-ctx.Done()
-    fmt.Println("goroutine saw:", ctx.Err())
-}()
 
-time.Sleep(100 * time.Millisecond)
-cancel()
-wg.Wait()
-```
-
-**Expected output:**
-```
-goroutine saw: context canceled
-```
-
-**Checkpoint:** `ctx.Err()` returns `context.Canceled` (not `nil`) after `cancel()` is called.
-
----
-
-### Lab 3: context.WithTimeout — HTTP GET with Deadline
-
-**What you'll practise:** Wrapping a network call with a timeout context to prevent hanging indefinitely.
-
-**Task:**
-Make an HTTP GET to a slow or unreachable URL using a 2-second timeout context. Observe that the request fails with `context.DeadlineExceeded`. Then test with a reachable URL within the timeout.
-
-**Steps:**
-1. `ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)`
-2. Build the request with `http.NewRequestWithContext(ctx, ...)`
-3. Use `http.DefaultClient.Do(req)` and inspect the error
-4. Check `errors.Is(err, context.DeadlineExceeded)` — print a friendly message
-
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-defer cancel()
-
-req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-    "http://10.255.255.1", nil) // unreachable IP
-if err != nil {
-    log.Fatal(err)
-}
-
-_, err = http.DefaultClient.Do(req)
-if errors.Is(err, context.DeadlineExceeded) {
-    fmt.Println("timed out as expected:", err)
-} else {
-    fmt.Println("unexpected error:", err)
-}
-```
-
-**Expected output:**
-```
-timed out as expected: Get "http://10.255.255.1": context deadline exceeded
-```
-
-**Checkpoint:** The program exits within ~2 seconds (not hanging), and the error wraps `context.DeadlineExceeded`.
-
----
-
-### Lab 4: context.WithDeadline — Absolute Deadline
-
-**What you'll practise:** Setting an absolute point-in-time deadline and distinguishing it from a relative timeout.
-
-**Task:**
-Create a context with an absolute deadline 3 seconds from now using `WithDeadline`. Print the deadline. Start a goroutine that sleeps 5 seconds (longer than the deadline). Observe it cancelled.
-
-**Steps:**
-1. `deadline := time.Now().Add(3 * time.Second)`
-2. `ctx, cancel := context.WithDeadline(context.Background(), deadline)`
-3. Print `ctx.Deadline()` to confirm the absolute time
-4. Launch a goroutine that waits 5 seconds but also selects on `ctx.Done()` — the context wins
-
-```go
-dl := time.Now().Add(3 * time.Second)
-ctx, cancel := context.WithDeadline(context.Background(), dl)
-defer cancel()
-
-t, ok := ctx.Deadline()
-fmt.Printf("deadline: %v (set: %v)\n", t.Format("15:04:05"), ok)
-
-select {
-case <-time.After(5 * time.Second):
-    fmt.Println("timer fired")
-case <-ctx.Done():
-    fmt.Println("context expired:", ctx.Err())
-}
-```
-
-**Expected output:**
-```
-deadline: 00:00:03 (set: true)
-context expired: context deadline exceeded
-```
-
-**Checkpoint:** The `select` hits `ctx.Done()` after ~3 seconds, not after 5 seconds.
-
----
-
-### Lab 5: context.WithValue — Request-Scoped Data
-
-**What you'll practise:** Storing and retrieving typed values in a context without key collisions.
-
-**Task:**
-Define an unexported key type to avoid collisions. Store a request ID in the context, pass the context through two function calls, and retrieve the request ID in the innermost function. Show what happens with a plain `string` key (collision-prone).
-
-**Steps:**
-1. Define `type ctxKey string` and `const keyRequestID ctxKey = "requestID"`
-2. `ctx := context.WithValue(context.Background(), keyRequestID, "req-abc-123")`
-3. Pass `ctx` to a `handleRequest(ctx)` that calls `processRequest(ctx)`
-4. In `processRequest`, retrieve with `ctx.Value(keyRequestID).(string)` and print it
-
-```go
-type ctxKey string
-
-const keyRequestID ctxKey = "requestID"
-
-func processRequest(ctx context.Context) {
-    id, ok := ctx.Value(keyRequestID).(string)
-    if !ok {
-        fmt.Println("no request ID in context")
-        return
-    }
-    fmt.Println("processing request:", id)
-}
-
-func main() {
-    ctx := context.WithValue(context.Background(), keyRequestID, "req-abc-123")
-    processRequest(ctx)
-
-    // Demonstrate collision: plain string key is shadowed by another package's same key
-    ctx2 := context.WithValue(ctx, "requestID", "collision!")
-    fmt.Println(ctx2.Value(keyRequestID)) // still "req-abc-123" — no collision
-}
-```
-
-**Expected output:**
-```
-processing request: req-abc-123
-req-abc-123
-```
-
-**Checkpoint:** The typed key retrieves the correct value, and the plain `string` key does not shadow it.
-
----
-
-### Lab 6: Propagate Cancellation — Three-Level Chain
-
-**What you'll practise:** Demonstrating that cancelling a parent context cancels all descendants.
-
-**Task:**
-Create a three-level chain: goroutine A creates a cancellable context, B derives from A's context, C derives from B's. Cancel A's context and verify that B and C both observe the cancellation.
-
-**Steps:**
-1. `ctxA, cancelA := context.WithCancel(context.Background())`
-2. `ctxB, cancelB := context.WithCancel(ctxA)` — derive from A
-3. `ctxC, cancelC := context.WithCancel(ctxB)` — derive from B
-4. Start goroutines A, B, C each blocking on their respective `ctx.Done()`
-5. `cancelA()` — all three should receive the cancellation
-
-```go
-ctxA, cancelA := context.WithCancel(context.Background())
-ctxB, cancelB := context.WithCancel(ctxA)
-ctxC, cancelC := context.WithCancel(ctxB)
-defer cancelB()
-defer cancelC()
-
-var wg sync.WaitGroup
-for name, ctx := range map[string]context.Context{"A": ctxA, "B": ctxB, "C": ctxC} {
+for i := 0; i < 100; i++ {
     wg.Add(1)
-    go func(n string, c context.Context) {
+    go func() {
         defer wg.Done()
-        <-c.Done()
-        fmt.Printf("%s cancelled: %v\n", n, c.Err())
-    }(name, ctx)
-}
-
-time.Sleep(100 * time.Millisecond)
-cancelA() // cancels A, B, and C
-wg.Wait()
-```
-
-**Expected output (order varies):**
-```
-A cancelled: context canceled
-B cancelled: context canceled
-C cancelled: context canceled
-```
-
-**Checkpoint:** All three goroutines exit after a single `cancelA()` call.
-
----
-
-### Lab 7: Context in HTTP Handlers — Early Return on Cancellation
-
-**What you'll practise:** Reading `r.Context()` in an HTTP handler and returning early if the client disconnects.
-
-**Task:**
-Write an HTTP handler that simulates 5 seconds of work using a loop with `time.Sleep(500ms)` per iteration. Check `ctx.Done()` inside the loop. Use `curl` (or a Go test client) to disconnect early and verify the handler stops.
-
-**Steps:**
-1. Create an HTTP handler that gets `ctx := r.Context()`
-2. Loop 10 times, each iteration sleeping 500ms then checking `ctx.Err()`
-3. If `ctx.Err() != nil`, log "client disconnected" and return
-4. Start the server on `:8080`, use `curl --max-time 2` to hit it and watch the server log
-
-```go
-func slowHandler(w http.ResponseWriter, r *http.Request) {
-    ctx := r.Context()
-    for i := 0; i < 10; i++ {
-        select {
-        case <-ctx.Done():
-            log.Printf("client disconnected after %d iterations: %v", i, ctx.Err())
-            return
-        case <-time.After(500 * time.Millisecond):
-            fmt.Fprintf(w, "tick %d\n", i)
-            if f, ok := w.(http.Flusher); ok { f.Flush() }
+        for j := 0; j < 1000; j++ {
+            counter++ // RACE
         }
-    }
-    fmt.Fprintln(w, "done")
+    }()
 }
-```
-
-**Expected output (server log):**
-```
-client disconnected after 3 iterations: context canceled
-```
-
-**Checkpoint:** The handler logs "client disconnected" when `curl` times out, proving it does not keep working unnecessarily.
-
----
-
-### Final Lab (Project): Cancellable HTTP Downloader + TCP Echo Server
-
-**What you'll practise:** Applying all context patterns — `WithTimeout`, `WithCancel`, `WithValue` — to two real programs.
-
-**Task:**
-Build both a concurrent HTTP downloader and a TCP echo server, both fully context-aware.
-
-**Steps:**
-1. **Downloader:** Accept URLs from `os.Args`. Download each concurrently with `http.NewRequestWithContext`. Cancel all in-flight downloads after 10 seconds with `context.WithTimeout`. Report success, failure, and cancelled separately.
-2. **TCP echo server:** Accept connections in a loop. Handle each with `go handleConn(ctx, conn)`. Shut down cleanly when `context.WithTimeout` expires — stop accepting new connections and close existing ones.
-3. Wire cancellation: a single top-level `cancel` function stops both the downloader and the server.
-
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-defer cancel()
-
-// Downloader
-for _, url := range os.Args[1:] {
-    wg.Add(1)
-    go func(u string) {
-        defer wg.Done()
-        req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-        resp, err := http.DefaultClient.Do(req)
-        // classify: success / deadline exceeded / other error
-    }(url)
-}
-
-// TCP echo server shuts down when ctx expires
-go func() {
-    <-ctx.Done()
-    listener.Close()
-}()
+wg.Wait()
+fmt.Println(counter) // likely < 100000
 ```
 
 **Expected output:**
 ```
-downloaded https://example.com (1256 bytes)
-cancelled https://slow.example.com: context deadline exceeded
-errors: 0  cancelled: 1  success: 1
+==================
+WARNING: DATA RACE
+Write at 0x... by goroutine 7:
+  main.main.func1()
+...
 ```
 
-**Checkpoint:** All goroutines exit within the timeout window. `go run -race main.go` shows no races.
+**Checkpoint:** The race detector reports at least one DATA RACE on `counter`.
 
 ---
 
-## Day Project: Cancellable HTTP Downloader
+### Lab 2: sync.Mutex — Fix the Race
 
-Write a program that:
-1. Takes a list of URLs (hardcoded or from `os.Args`)
-2. Downloads each concurrently with [`http.NewRequestWithContext`](https://pkg.go.dev/net/http#NewRequestWithContext)
-3. Cancels all in-flight downloads after a configurable timeout (e.g. 10s)
-4. Reports success, failure, and cancelled downloads separately
+**What you'll practise:** Protecting shared state with `sync.Mutex` to eliminate data races.
 
-Also write a minimal TCP echo server that:
-- Accepts connections
-- Echoes every line back in uppercase
-- Shuts down cleanly when a [`context.WithTimeout`](https://pkg.go.dev/context#WithTimeout) expires
+**Task:**
+Take the racy counter from Lab 1 and protect it with a `sync.Mutex`. Verify with `go run -race` that the race is gone and the final count is exactly 100 000.
 
-**Extension ideas:** implement backpressure by limiting concurrent downloads with a semaphore; add retry with exponential backoff.
+**Steps:**
+1. Create `type SafeCounter struct { mu sync.Mutex; n int }`
+2. Add `Inc()` and `Value()` methods, each using `mu.Lock() / defer mu.Unlock()`
+3. Replace bare `counter++` with `sc.Inc()`
+4. Run with `-race` — confirm no races; confirm `sc.Value() == 100000`
+
+```go
+type SafeCounter struct {
+    mu sync.Mutex
+    n  int
+}
+
+func (c *SafeCounter) Inc() {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.n++
+}
+
+func (c *SafeCounter) Value() int {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return c.n
+}
+```
+
+**Expected output:**
+```
+100000
+(no DATA RACE warning)
+```
+
+**Checkpoint:** `go run -race main.go` exits 0 with final counter exactly 100 000.
+
+---
+
+### Lab 3: sync.RWMutex — Read-Heavy Cache
+
+**What you'll practise:** Using `RWMutex` to allow concurrent reads while serialising writes.
+
+**Task:**
+Build an in-memory string cache backed by a `map[string]string`. Start 10 reader goroutines and 1 writer goroutine. Show that `RWMutex` outperforms a plain `Mutex` by running both versions with `go test -bench`.
+
+**Steps:**
+1. Implement `type Cache struct { mu sync.RWMutex; m map[string]string }`
+2. Add `Get(key string) (string, bool)` using `RLock/RUnlock`
+3. Add `Set(key, value string)` using `Lock/Unlock`
+4. Write `BenchmarkCacheRWMutex` (10 readers, 1 writer goroutine) and `BenchmarkCacheMutex` (same but `sync.Mutex`)
+
+```go
+func (c *Cache) Get(key string) (string, bool) {
+    c.mu.RLock()
+    defer c.mu.RUnlock()
+    v, ok := c.m[key]
+    return v, ok
+}
+
+func (c *Cache) Set(key, value string) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.m[key] = value
+}
+```
+
+**Expected output:**
+```
+BenchmarkCacheRWMutex-8    5000000    240 ns/op
+BenchmarkCacheMutex-8      2000000    610 ns/op
+```
+
+**Checkpoint:** RWMutex benchmark shows lower ns/op than Mutex benchmark when reads dominate.
+
+---
+
+### Lab 4: sync.WaitGroup — 20 Concurrent Workers
+
+**What you'll practise:** Coordinating a pool of goroutines to completion with `WaitGroup`.
+
+**Task:**
+Launch 20 goroutines that each sleep a random duration (0–100ms) then log their ID and elapsed time. Use `sync.WaitGroup` to wait for all. Compare with a channel-based coordination approach.
+
+**Steps:**
+1. `var wg sync.WaitGroup; wg.Add(20)`
+2. Launch 20 goroutines: `defer wg.Done()`, sleep `rand.Intn(100)` ms, print ID and duration
+3. Call `wg.Wait()` and print "all workers done"
+4. Rewrite using a `done := make(chan struct{})` approach and compare code clarity
+
+```go
+var wg sync.WaitGroup
+for i := 0; i < 20; i++ {
+    wg.Add(1)
+    go func(id int) {
+        defer wg.Done()
+        d := time.Duration(rand.Intn(100)) * time.Millisecond
+        time.Sleep(d)
+        fmt.Printf("worker %d done after %v\n", id, d)
+    }(i)
+}
+wg.Wait()
+fmt.Println("all workers done")
+```
+
+**Expected output:**
+```
+worker 7 done after 12ms
+worker 3 done after 33ms
+...
+all workers done
+```
+
+**Checkpoint:** "all workers done" always appears last, after all 20 worker lines.
+
+---
+
+### Lab 5: sync.Once — Singleton Initialisation
+
+**What you'll practise:** Guaranteeing exactly-once initialisation under concurrent access.
+
+**Task:**
+Simulate a database connection pool. Use `sync.Once` so the `connect()` function is called exactly once regardless of how many goroutines call `GetDB()` concurrently. Add a counter inside `connect()` to prove it runs once.
+
+**Steps:**
+1. Declare `var (instance *DB; once sync.Once; initCount int32)`
+2. In `connect()`, increment `atomic.AddInt32(&initCount, 1)` and return a new DB
+3. `GetDB()` calls `once.Do(func() { instance = connect() })` then returns `instance`
+4. Launch 100 goroutines all calling `GetDB()`, print `initCount` — must be 1
+
+```go
+var (
+    instance  *DB
+    once      sync.Once
+    initCount int32
+)
+
+func connect() *DB {
+    atomic.AddInt32(&initCount, 1)
+    fmt.Println("connecting to DB...")
+    return &DB{}
+}
+
+func GetDB() *DB {
+    once.Do(func() { instance = connect() })
+    return instance
+}
+```
+
+**Expected output:**
+```
+connecting to DB...
+initCount: 1
+all 100 goroutines got the same DB: true
+```
+
+**Checkpoint:** `initCount` is 1 and all 100 goroutines receive the same pointer value.
+
+---
+
+### Lab 6: sync/atomic — Atomic vs Mutex Benchmark
+
+**What you'll practise:** Comparing lock-free atomic operations with mutex-protected increments.
+
+**Task:**
+Implement two counters: one using `atomic.AddInt64` and one using `sync.Mutex`. Benchmark both with 8 goroutines each incrementing 1 000 000 times. Observe which is faster and why.
+
+**Steps:**
+1. `BenchmarkAtomicCounter` — use `atomic.AddInt64(&n, 1)` in a tight loop
+2. `BenchmarkMutexCounter` — use `mu.Lock(); n++; mu.Unlock()` in a tight loop
+3. Run `go test -bench=. -benchmem -cpu=8 ./...`
+4. Note that atomic is faster but limited to simple integer operations
+
+```go
+var atomicN int64
+
+func BenchmarkAtomicCounter(b *testing.B) {
+    b.RunParallel(func(pb *testing.PB) {
+        for pb.Next() {
+            atomic.AddInt64(&atomicN, 1)
+        }
+    })
+}
+
+var mu sync.Mutex
+var mutexN int64
+
+func BenchmarkMutexCounter(b *testing.B) {
+    b.RunParallel(func(pb *testing.PB) {
+        for pb.Next() {
+            mu.Lock()
+            mutexN++
+            mu.Unlock()
+        }
+    })
+}
+```
+
+**Expected output:**
+```
+BenchmarkAtomicCounter-8    200000000    6.0 ns/op
+BenchmarkMutexCounter-8      50000000   28.0 ns/op
+```
+
+**Checkpoint:** Atomic benchmark shows significantly lower ns/op than the mutex benchmark.
+
+---
+
+### Lab 7: sync.Map — Concurrent Word Counter
+
+**What you'll practise:** Using `sync.Map` for concurrent map writes without a custom mutex.
+
+**Task:**
+Count word frequencies from 10 goroutines each processing a slice of text. Use `sync.Map` — specifically `LoadOrStore` and `Store` — to accumulate counts. Compare the code to the `sync.RWMutex` approach from Lab 3.
+
+**Steps:**
+1. Split a large text into 10 chunks, one per goroutine
+2. Each goroutine tokenises its chunk and increments counts in a `sync.Map`
+3. Use `sync.Map.Range` to iterate and print the top-10 words by count
+4. Note: `sync.Map` lacks atomic increment — you need a `LoadOrStore` + compare-and-swap pattern
+
+```go
+var freq sync.Map
+
+var wg sync.WaitGroup
+for _, chunk := range chunks {
+    wg.Add(1)
+    go func(words []string) {
+        defer wg.Done()
+        for _, w := range words {
+            actual, _ := freq.LoadOrStore(w, new(int64))
+            atomic.AddInt64(actual.(*int64), 1)
+        }
+    }(chunk)
+}
+wg.Wait()
+
+freq.Range(func(k, v any) bool {
+    fmt.Printf("%s: %d\n", k, atomic.LoadInt64(v.(*int64)))
+    return true
+})
+```
+
+**Expected output:**
+```
+the: 142
+a: 97
+and: 84
+...
+```
+
+**Checkpoint:** Every word appears exactly once in the output with an accurate count.
+
+---
+
+### Final Lab (Project): Thread-Safe LRU Cache
+
+**What you'll practise:** Combining `sync.RWMutex`, `container/list`, and `sync/atomic` into a production-quality concurrent data structure.
+
+**Task:**
+Implement a thread-safe LRU (Least Recently Used) cache with O(1) Get and Put operations.
+
+**Steps:**
+1. Implement `New(capacity int) *LRUCache`
+2. `Get(key string) (any, bool)` — acquire `RLock`, look up in map, move entry to front of list
+3. `Put(key string, value any)` — acquire `Lock`, insert at front, evict LRU entry (back of list) when at capacity
+4. Track hits and misses with `atomic.AddInt64`
+5. Write a concurrent test: 10 goroutines doing random Gets and Puts simultaneously, verified with `go test -race`
+
+```go
+type LRUCache struct {
+    mu       sync.RWMutex
+    capacity int
+    list     *list.List
+    items    map[string]*list.Element
+    hits     int64
+    misses   int64
+}
+
+func (c *LRUCache) Get(key string) (any, bool) {
+    c.mu.Lock() // need write lock to move element
+    defer c.mu.Unlock()
+    if el, ok := c.items[key]; ok {
+        c.list.MoveToFront(el)
+        atomic.AddInt64(&c.hits, 1)
+        return el.Value.(*entry).value, true
+    }
+    atomic.AddInt64(&c.misses, 1)
+    return nil, false
+}
+```
+
+**Expected output:**
+```
+put A=1, B=2, C=3 (capacity 2 — A evicted)
+get B: 2 (hit)
+get A: not found (miss)
+hits: 1  misses: 1
+```
+
+**Checkpoint:** `go test -race ./...` passes with no races. Get returns the correct value after a sequence of Puts that exceed capacity.
+
+---
+
+## Day Project: Thread-Safe LRU Cache
+
+Implement an LRU (Least Recently Used) cache with:
+- `New(capacity int) *LRUCache`
+- `Get(key string) (any, bool)` — O(1), RLock
+- `Put(key string, value any)` — O(1), Lock, evicts LRU entry when full
+- Thread-safe using [`sync.RWMutex`](https://pkg.go.dev/sync#RWMutex)
+- A hit/miss counter using [`sync/atomic`](https://pkg.go.dev/sync/atomic)
+
+Use [`container/list`](https://pkg.go.dev/container/list) as the doubly linked list and a `map[string]*list.Element` for O(1) lookup.
+
+**Extension ideas:** add a TTL per entry using a `time.Time` in the value; implement `sync.Map`-based variant and benchmark both.
 
 ## Official Documentation
 
-- [`context`](https://pkg.go.dev/context) — Context, Background, WithCancel, WithTimeout, WithDeadline, WithValue
-- [`net/http`](https://pkg.go.dev/net/http) — NewRequestWithContext, DefaultClient, HTTP methods
-- [`net`](https://pkg.go.dev/net) — Listen, Conn for TCP server
-- [`os`](https://pkg.go.dev/os) — `os.Args` for URL list input
-- [Go Blog: Go Concurrency Patterns: Context](https://go.dev/blog/context) — context usage patterns
-- [Go Blog: Contexts and structs](https://go.dev/blog/context-and-structs) — why context goes in arguments not structs
-- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency) — cancellation and coordination
-- [Go Tour: Concurrency](https://go.dev/tour/concurrency/1) — goroutines and channels foundation
+- [`sync`](https://pkg.go.dev/sync) — Mutex, RWMutex, WaitGroup, Once, Map
+- [`sync/atomic`](https://pkg.go.dev/sync/atomic) — AddInt64, LoadInt64, and other atomic operations
+- [`container/list`](https://pkg.go.dev/container/list) — doubly linked list for LRU implementation
+- [Language Spec: Go statements](https://go.dev/ref/spec#Go_statements) — goroutine semantics
+- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency) — synchronisation patterns
+- [Go Blog: The Go Memory Model](https://go.dev/ref/mem) — happens-before and synchronisation guarantees
+- [Go Blog: Share Memory by Communicating](https://go.dev/blog/codelab-share) — when to use channels vs mutexes

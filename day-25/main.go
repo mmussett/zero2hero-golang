@@ -1,16 +1,12 @@
-// Package main demonstrates structured logging with log/slog, request-scoped
-// loggers stored in context, and a JSON-logging middleware wrapping the
-// day-22 Notes API.
+// Package main demonstrates error handling at scale: sentinel errors, typed
+// AppError, HTTP status mapping, errors.Join for validation, and errors.Is/As.
 package main
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
-	"math/rand"
 	"net/http"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -19,97 +15,89 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-// ---- Context key for the per-request logger ------------------------------
+// ---- Sentinel errors -----------------------------------------------------
 
-type loggerKeyType struct{}
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrInvalidInput  = errors.New("invalid input")
+	ErrUnauthorized  = errors.New("unauthorized")
+)
 
-var loggerKey loggerKeyType
+// ---- AppError ------------------------------------------------------------
 
-// withLogger stores l in ctx.
-func withLogger(ctx context.Context, l *slog.Logger) context.Context {
-	return context.WithValue(ctx, loggerKey, l)
+// AppError is a typed error that carries an HTTP status code, a machine-
+// readable code string, a human-readable message, and a wrapped sentinel.
+type AppError struct {
+	Code    int    // HTTP status code
+	ErrCode string // machine-readable code, e.g. "NOT_FOUND"
+	Message string // human-readable description
+	Err     error  // wrapped sentinel
 }
 
-// loggerFrom retrieves the per-request logger from ctx, falling back to the
-// default global logger if none has been stored.
-func loggerFrom(ctx context.Context) *slog.Logger {
-	if l, ok := ctx.Value(loggerKey).(*slog.Logger); ok {
-		return l
+func (e *AppError) Error() string { return e.Message }
+func (e *AppError) Unwrap() error { return e.Err }
+
+// StatusCode returns the HTTP status code for the error.
+func (e *AppError) StatusCode() int { return e.Code }
+
+// Helper constructors ---------------------------------------------------------
+
+// NotFound returns an AppError that wraps ErrNotFound.
+func NotFound(msg string) *AppError {
+	return &AppError{
+		Code:    http.StatusNotFound,
+		ErrCode: "NOT_FOUND",
+		Message: msg,
+		Err:     ErrNotFound,
 	}
-	return slog.Default()
 }
 
-// ---- statusWriter wraps ResponseWriter to capture the status code --------
-
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (sw *statusWriter) WriteHeader(code int) {
-	sw.status = code
-	sw.ResponseWriter.WriteHeader(code)
-}
-
-func (sw *statusWriter) Write(b []byte) (int, error) {
-	if sw.status == 0 {
-		sw.status = http.StatusOK
+// InvalidInput returns an AppError that wraps ErrInvalidInput.
+func InvalidInput(msg string) *AppError {
+	return &AppError{
+		Code:    http.StatusBadRequest,
+		ErrCode: "INVALID_INPUT",
+		Message: msg,
+		Err:     ErrInvalidInput,
 	}
-	return sw.ResponseWriter.Write(b)
 }
 
-// ---- Request ID generation -----------------------------------------------
-
-// newRequestID returns a random 8-byte hex string suitable as a request ID.
-func newRequestID() string {
-	b := make([]byte, 8)
-	rand.Read(b) //nolint:errcheck
-	return fmt.Sprintf("%x", b)
+// Unauthorized returns an AppError that wraps ErrUnauthorized.
+func Unauthorized(msg string) *AppError {
+	return &AppError{
+		Code:    http.StatusUnauthorized,
+		ErrCode: "UNAUTHORIZED",
+		Message: msg,
+		Err:     ErrUnauthorized,
+	}
 }
 
-// ---- Logging middleware --------------------------------------------------
+// ---- HTTP helpers -------------------------------------------------------
 
-// requestLogger is a chi-compatible middleware that:
-//   - generates a unique request ID
-//   - injects a per-request slog.Logger into the context
-//   - logs method, path, status, duration, and request ID
-//   - sets the X-Request-ID response header
-func requestLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		reqID := newRequestID()
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v) //nolint:errcheck
+}
 
-		// Build a logger pre-loaded with immutable request fields.
-		log := slog.With(
-			"request_id", reqID,
-			"method", r.Method,
-			"path", r.URL.Path,
-		)
-
-		// Make it available to downstream handlers via context.
-		ctx := withLogger(r.Context(), log)
-
-		// Propagate the request ID to the client.
-		w.Header().Set("X-Request-ID", reqID)
-
-		log.Info("request started")
-
-		sw := &statusWriter{ResponseWriter: w}
-		next.ServeHTTP(sw, r.WithContext(ctx))
-
-		status := sw.status
-		if status == 0 {
-			status = http.StatusOK
-		}
-
-		log.Info("request completed",
-			"status", status,
-			"duration_ms", time.Since(start).Milliseconds(),
-		)
+// handleErr writes a JSON error response derived from an AppError if possible,
+// or a generic 500 otherwise.
+func handleErr(w http.ResponseWriter, err error) {
+	var ae *AppError
+	if errors.As(err, &ae) {
+		writeJSON(w, ae.StatusCode(), map[string]string{
+			"code":    ae.ErrCode,
+			"message": ae.Message,
+		})
+		return
+	}
+	writeJSON(w, http.StatusInternalServerError, map[string]string{
+		"code":    "INTERNAL",
+		"message": "internal server error",
 	})
 }
 
-// ---- Notes domain --------------------------------------------------------
+// ---- Domain types --------------------------------------------------------
 
 type Note struct {
 	ID        int       `json:"id"`
@@ -118,6 +106,25 @@ type Note struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// ---- Validation ----------------------------------------------------------
+
+// validateNote validates a note's title and body, collecting all errors.
+func validateNote(title, body string) error {
+	var errs []error
+	if title == "" {
+		errs = append(errs, errors.New("title is required"))
+	}
+	if len(title) > 200 {
+		errs = append(errs, errors.New("title must be 200 characters or fewer"))
+	}
+	if len(body) > 10_000 {
+		errs = append(errs, errors.New("body must be 10 000 characters or fewer"))
+	}
+	return errors.Join(errs...)
+}
+
+// ---- In-memory store (same as day-22, now returns AppErrors) -------------
 
 type Store struct {
 	mu    sync.RWMutex
@@ -137,57 +144,54 @@ func (s *Store) List() []Note {
 	return out
 }
 
-func (s *Store) Get(id int) (Note, bool) {
+func (s *Store) Get(id int) (Note, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	n, ok := s.notes[id]
-	return n, ok
+	if !ok {
+		return Note{}, NotFound(fmt.Sprintf("note %d not found", id))
+	}
+	return n, nil
 }
 
-func (s *Store) Create(title, body string) Note {
+func (s *Store) Create(title, body string) (Note, error) {
+	if err := validateNote(title, body); err != nil {
+		return Note{}, InvalidInput(err.Error())
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seq++
 	now := time.Now()
 	n := Note{ID: s.seq, Title: title, Body: body, CreatedAt: now, UpdatedAt: now}
 	s.notes[s.seq] = n
-	return n
+	return n, nil
 }
 
-func (s *Store) Update(id int, title, body string) (Note, bool) {
+func (s *Store) Update(id int, title, body string) (Note, error) {
+	if err := validateNote(title, body); err != nil {
+		return Note{}, InvalidInput(err.Error())
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n, ok := s.notes[id]
 	if !ok {
-		return Note{}, false
+		return Note{}, NotFound(fmt.Sprintf("note %d not found", id))
 	}
 	n.Title = title
 	n.Body = body
 	n.UpdatedAt = time.Now()
 	s.notes[id] = n
-	return n, true
+	return n, nil
 }
 
-func (s *Store) Delete(id int) bool {
+func (s *Store) Delete(id int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.notes[id]
-	if ok {
-		delete(s.notes, id)
+	if _, ok := s.notes[id]; !ok {
+		return NotFound(fmt.Sprintf("note %d not found", id))
 	}
-	return ok
-}
-
-// ---- HTTP helpers --------------------------------------------------------
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
-}
-
-func readJSON(r *http.Request, v any) error {
-	return json.NewDecoder(r.Body).Decode(v)
+	delete(s.notes, id)
+	return nil
 }
 
 // ---- Handlers ------------------------------------------------------------
@@ -203,106 +207,84 @@ func urlParamInt(r *http.Request, key string) (int, error) {
 	raw := chi.URLParam(r, key)
 	id, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, fmt.Errorf("invalid %s: %q", key, raw)
+		return 0, InvalidInput(fmt.Sprintf("invalid %s: %q", key, raw))
 	}
 	return id, nil
 }
 
+func readJSON(r *http.Request, v any) error {
+	return json.NewDecoder(r.Body).Decode(v)
+}
+
 func (h *Handler) listNotes(w http.ResponseWriter, r *http.Request) {
-	log := loggerFrom(r.Context())
-	notes := h.store.List()
-	log.Info("listing notes", "count", len(notes))
-	writeJSON(w, http.StatusOK, notes)
+	writeJSON(w, http.StatusOK, h.store.List())
 }
 
 func (h *Handler) createNote(w http.ResponseWriter, r *http.Request) {
-	log := loggerFrom(r.Context())
 	var req noteRequest
 	if err := readJSON(r, &req); err != nil {
-		log.Error("decode body failed", "err", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleErr(w, InvalidInput("request body must be valid JSON"))
 		return
 	}
-	if req.Title == "" {
-		log.Warn("create note: missing title")
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title is required"})
+	n, err := h.store.Create(req.Title, req.Body)
+	if err != nil {
+		handleErr(w, err)
 		return
 	}
-	n := h.store.Create(req.Title, req.Body)
-	log.Info("note created", "note_id", n.ID)
 	writeJSON(w, http.StatusCreated, n)
 }
 
 func (h *Handler) getNote(w http.ResponseWriter, r *http.Request) {
-	log := loggerFrom(r.Context())
 	id, err := urlParamInt(r, "id")
 	if err != nil {
-		log.Warn("bad id param", "err", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleErr(w, err)
 		return
 	}
-	n, ok := h.store.Get(id)
-	if !ok {
-		log.Warn("note not found", "note_id", id)
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "note not found"})
+	n, err := h.store.Get(id)
+	if err != nil {
+		handleErr(w, err)
 		return
 	}
-	log.Info("note fetched", "note_id", id)
 	writeJSON(w, http.StatusOK, n)
 }
 
 func (h *Handler) updateNote(w http.ResponseWriter, r *http.Request) {
-	log := loggerFrom(r.Context())
 	id, err := urlParamInt(r, "id")
 	if err != nil {
-		log.Warn("bad id param", "err", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleErr(w, err)
 		return
 	}
 	var req noteRequest
 	if err := readJSON(r, &req); err != nil {
-		log.Error("decode body failed", "err", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleErr(w, InvalidInput("request body must be valid JSON"))
 		return
 	}
-	if req.Title == "" {
-		log.Warn("update note: missing title", "note_id", id)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title is required"})
+	n, err := h.store.Update(id, req.Title, req.Body)
+	if err != nil {
+		handleErr(w, err)
 		return
 	}
-	n, ok := h.store.Update(id, req.Title, req.Body)
-	if !ok {
-		log.Warn("note not found for update", "note_id", id)
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "note not found"})
-		return
-	}
-	log.Info("note updated", "note_id", n.ID)
 	writeJSON(w, http.StatusOK, n)
 }
 
 func (h *Handler) deleteNote(w http.ResponseWriter, r *http.Request) {
-	log := loggerFrom(r.Context())
 	id, err := urlParamInt(r, "id")
 	if err != nil {
-		log.Warn("bad id param", "err", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		handleErr(w, err)
 		return
 	}
-	if !h.store.Delete(id) {
-		log.Warn("note not found for delete", "note_id", id)
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "note not found"})
+	if err := h.store.Delete(id); err != nil {
+		handleErr(w, err)
 		return
 	}
-	log.Info("note deleted", "note_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// NewRouter builds a chi router with the logging middleware applied.
+// NewRouter wires up the chi router.
 func NewRouter(store *Store) http.Handler {
 	h := &Handler{store: store}
-
 	r := chi.NewRouter()
-	r.Use(requestLogger) // our structured-logging middleware
+	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.SetHeader("Content-Type", "application/json"))
 
@@ -316,35 +298,44 @@ func NewRouter(store *Store) http.Handler {
 	return r
 }
 
-// ---- Logger initialisation -----------------------------------------------
+// ---- Demo: errors.Is / errors.As / errors.Join ---------------------------
 
-// logLevel parses the LOG_LEVEL environment variable, defaulting to Info.
-func logLevel() slog.Level {
-	switch os.Getenv("LOG_LEVEL") {
-	case "DEBUG", "debug":
-		return slog.LevelDebug
-	case "WARN", "warn":
-		return slog.LevelWarn
-	case "ERROR", "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
+func runDemo() {
+	fmt.Println("=== Error Handling Demo ===")
+
+	// 1. Sentinel identity check with errors.Is
+	err := NotFound("note 42 not found")
+	fmt.Printf("errors.Is(err, ErrNotFound)     = %v\n", errors.Is(err, ErrNotFound))
+	fmt.Printf("errors.Is(err, ErrInvalidInput) = %v\n", errors.Is(err, ErrInvalidInput))
+
+	// 2. Type assertion with errors.As
+	var ae *AppError
+	if errors.As(err, &ae) {
+		fmt.Printf("AppError: code=%d errCode=%s msg=%s\n", ae.Code, ae.ErrCode, ae.Message)
 	}
+
+	// 3. errors.Join to collect multiple validation errors
+	joinErr := validateNote("", string(make([]byte, 10_001)))
+	fmt.Printf("Validation errors:\n  %v\n", joinErr)
+
+	// Confirm both sentinels are detectable in the joined error.
+	fmt.Printf("errors.Is(joinErr, ErrInvalidInput) via Join: %v\n",
+		errors.Is(InvalidInput(joinErr.Error()), ErrInvalidInput))
+
+	// 4. Wrapped chain
+	wrapped := fmt.Errorf("pipeline failed: %w", NotFound("widget 7 not found"))
+	fmt.Printf("Wrapped errors.Is(ErrNotFound) = %v\n", errors.Is(wrapped, ErrNotFound))
+
+	fmt.Println()
+	fmt.Println("Starting Notes API with error-aware handlers on :8080")
 }
 
 func main() {
-	// Configure a global JSON logger.
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel(),
-	}))
-	slog.SetDefault(logger)
+	runDemo()
 
 	store := NewStore()
 	router := NewRouter(store)
-
-	addr := ":8080"
-	slog.Info("notes API starting", "addr", addr)
-	if err := http.ListenAndServe(addr, router); err != nil {
-		slog.Error("server stopped", "err", err)
+	if err := http.ListenAndServe(":8080", router); err != nil {
+		fmt.Printf("server: %v\n", err)
 	}
 }

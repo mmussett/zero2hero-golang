@@ -1,167 +1,119 @@
 package main
 
-import (
-	"container/heap"
-	"container/list"
-	"fmt"
-)
+import "fmt"
 
-// ── Min-Heap Priority Queue ──────────────────────────────────────────────────
-
-type MinHeap []int
-
-func (h MinHeap) Len() int           { return len(h) }
-func (h MinHeap) Less(i, j int) bool { return h[i] < h[j] }
-func (h MinHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *MinHeap) Push(x any)        { *h = append(*h, x.(int)) }
-func (h *MinHeap) Pop() any {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[:n-1]
-	return x
+// Stack — LIFO
+type Stack[T any] struct {
+	items []T
 }
 
-// ── LRU Cache ────────────────────────────────────────────────────────────────
+func (s *Stack[T]) Push(v T)       { s.items = append(s.items, v) }
+func (s *Stack[T]) Len() int       { return len(s.items) }
+func (s *Stack[T]) IsEmpty() bool  { return len(s.items) == 0 }
 
-type lruEntry struct{ key, val string }
-
-type LRUCache struct {
-	cap   int
-	list  *list.List
-	items map[string]*list.Element
-}
-
-func NewLRU(cap int) *LRUCache {
-	return &LRUCache{
-		cap:   cap,
-		list:  list.New(),
-		items: make(map[string]*list.Element),
+func (s *Stack[T]) Pop() (T, bool) {
+	if s.IsEmpty() {
+		var zero T
+		return zero, false
 	}
+	top := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return top, true
 }
 
-func (c *LRUCache) Get(key string) (string, bool) {
-	if el, ok := c.items[key]; ok {
-		c.list.MoveToFront(el)
-		return el.Value.(*lruEntry).val, true
+func (s *Stack[T]) Peek() (T, bool) {
+	if s.IsEmpty() {
+		var zero T
+		return zero, false
 	}
-	return "", false
+	return s.items[len(s.items)-1], true
 }
 
-func (c *LRUCache) Put(key, val string) {
-	if el, ok := c.items[key]; ok {
-		c.list.MoveToFront(el)
-		el.Value.(*lruEntry).val = val
-		return
+// Queue — FIFO
+type Queue[T any] struct {
+	items []T
+	head  int
+}
+
+func (q *Queue[T]) Enqueue(v T)    { q.items = append(q.items, v) }
+func (q *Queue[T]) Len() int       { return len(q.items) - q.head }
+func (q *Queue[T]) IsEmpty() bool  { return q.Len() == 0 }
+
+func (q *Queue[T]) Dequeue() (T, bool) {
+	if q.IsEmpty() {
+		var zero T
+		return zero, false
 	}
-	if c.list.Len() == c.cap {
-		back := c.list.Back()
-		c.list.Remove(back)
-		delete(c.items, back.Value.(*lruEntry).key)
+	v := q.items[q.head]
+	q.head++
+	return v, true
+}
+
+func (q *Queue[T]) Front() (T, bool) {
+	if q.IsEmpty() {
+		var zero T
+		return zero, false
 	}
-	el := c.list.PushFront(&lruEntry{key, val})
-	c.items[key] = el
+	return q.items[q.head], true
 }
 
-// ── Graph with BFS / DFS / HasPath ──────────────────────────────────────────
-
-type Graph map[string][]string
-
-func (g Graph) AddEdge(from, to string) {
-	g[from] = append(g[from], to)
-	g[to] = append(g[to], from)
-}
-
-func (g Graph) BFS(start string) []string {
-	visited := map[string]bool{start: true}
-	queue := []string{start}
-	var order []string
-	for len(queue) > 0 {
-		node := queue[0]
-		queue = queue[1:]
-		order = append(order, node)
-		for _, nb := range g[node] {
-			if !visited[nb] {
-				visited[nb] = true
-				queue = append(queue, nb)
-			}
+// Higher-order generic functions
+func Filter[T any](s []T, keep func(T) bool) []T {
+	result := make([]T, 0, len(s))
+	for _, v := range s {
+		if keep(v) {
+			result = append(result, v)
 		}
 	}
-	return order
+	return result
 }
 
-func (g Graph) DFS(start string) []string {
-	var order []string
-	visited := map[string]bool{}
-	var dfs func(n string)
-	dfs = func(n string) {
-		visited[n] = true
-		order = append(order, n)
-		for _, nb := range g[n] {
-			if !visited[nb] {
-				dfs(nb)
-			}
-		}
+func Map[T, U any](s []T, f func(T) U) []U {
+	result := make([]U, len(s))
+	for i, v := range s {
+		result[i] = f(v)
 	}
-	dfs(start)
-	return order
+	return result
 }
 
-func (g Graph) HasPath(from, to string) bool {
-	visited := map[string]bool{}
-	var dfs func(n string) bool
-	dfs = func(n string) bool {
-		if n == to {
-			return true
-		}
-		visited[n] = true
-		for _, nb := range g[n] {
-			if !visited[nb] && dfs(nb) {
-				return true
-			}
-		}
-		return false
+func Reduce[T, U any](s []T, init U, f func(U, T) U) U {
+	acc := init
+	for _, v := range s {
+		acc = f(acc, v)
 	}
-	return dfs(from)
+	return acc
 }
 
 func main() {
-	// Min-heap
-	fmt.Println("=== Min-Heap ===")
-	h := &MinHeap{5, 3, 8, 1, 9, 2}
-	heap.Init(h)
-	heap.Push(h, 4)
-	for h.Len() > 0 {
-		fmt.Printf("%d ", heap.Pop(h))
+	fmt.Println("=== Stack (LIFO) ===")
+	var s Stack[int]
+	for _, v := range []int{1, 2, 3, 4, 5} {
+		s.Push(v)
+	}
+	for !s.IsEmpty() {
+		v, _ := s.Pop()
+		fmt.Printf("%d ", v)
 	}
 	fmt.Println()
 
-	// LRU cache
-	fmt.Println("\n=== LRU Cache (capacity 3) ===")
-	lru := NewLRU(3)
-	lru.Put("a", "apple")
-	lru.Put("b", "banana")
-	lru.Put("c", "cherry")
-	lru.Get("a")        // moves a to front; b becomes LRU
-	lru.Put("d", "date") // evicts b
-	for _, k := range []string{"a", "b", "c", "d"} {
-		if v, ok := lru.Get(k); ok {
-			fmt.Printf("  %s → %s\n", k, v)
-		} else {
-			fmt.Printf("  %s → (evicted)\n", k)
-		}
+	fmt.Println("\n=== Queue (FIFO) ===")
+	var q Queue[string]
+	for _, w := range []string{"first", "second", "third"} {
+		q.Enqueue(w)
 	}
+	for !q.IsEmpty() {
+		v, _ := q.Dequeue()
+		fmt.Printf("%q ", v)
+	}
+	fmt.Println()
 
-	// Graph
-	fmt.Println("\n=== Graph ===")
-	g := Graph{}
-	g.AddEdge("A", "B")
-	g.AddEdge("A", "C")
-	g.AddEdge("B", "D")
-	g.AddEdge("C", "D")
-	g.AddEdge("D", "E")
-	fmt.Printf("BFS from A: %v\n", g.BFS("A"))
-	fmt.Printf("DFS from A: %v\n", g.DFS("A"))
-	fmt.Printf("Path A→E:  %v\n", g.HasPath("A", "E"))
-	fmt.Printf("Path E→A:  %v\n", g.HasPath("E", "A"))
+	fmt.Println("\n=== Generic Functions ===")
+	nums := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	evens := Filter(nums, func(n int) bool { return n%2 == 0 })
+	doubled := Map(evens, func(n int) int { return n * 2 })
+	sum := Reduce(doubled, 0, func(acc, n int) int { return acc + n })
+	fmt.Printf("nums:    %v\n", nums)
+	fmt.Printf("evens:   %v\n", evens)
+	fmt.Printf("doubled: %v\n", doubled)
+	fmt.Printf("sum:     %d\n", sum)
 }

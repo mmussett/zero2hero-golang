@@ -1,417 +1,415 @@
-# Day 26: Benchmarking and Profiling
+# Day 26: Structured Logging with log/slog
 
-## Core Concept: Measure Before Optimising
+## Core Concept: Logs Are Data, Not Text
 
-Go's built-in benchmark framework and `pprof` profiler make performance analysis a first-class workflow.
+`log/slog` (Go 1.21+) replaces the old `log` package for production code. Structured logs — key-value pairs — can be parsed, searched, and aggregated by log platforms.
 
-## Writing Benchmarks
+## Basic Usage
 
 ```go
-// bench_test.go
-func BenchmarkWordCount(b *testing.B) {
-    text := strings.Repeat("the quick brown fox jumps over the lazy dog ", 1000)
-    b.ResetTimer() // exclude setup from measurement
-    for i := 0; i < b.N; i++ {
-        wordCount(text)
-    }
+import "log/slog"
+
+slog.Info("server started", "addr", ":8080")
+slog.Error("request failed", "err", err, "path", r.URL.Path)
+slog.Debug("cache hit", "key", key, "ttl", ttl)
+```
+
+## Configuring the Global Logger
+
+```go
+// JSON handler (for production)
+logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: slog.LevelInfo,
+}))
+slog.SetDefault(logger)
+
+// Text handler (for development)
+slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+```
+
+## Logger With Context
+
+```go
+// Attach attributes to a logger
+log := slog.With("service", "notes-api", "version", "1.0.0")
+log.Info("request received")
+
+// Logger in context (for request-scoped logging)
+func withLogger(ctx context.Context, log *slog.Logger) context.Context {
+    return context.WithValue(ctx, loggerKey{}, log)
 }
 
-func BenchmarkWordCountParallel(b *testing.B) {
-    text := strings.Repeat("hello world ", 1000)
-    b.RunParallel(func(pb *testing.PB) {
-        for pb.Next() {
-            wordCount(text)
-        }
+func loggerFrom(ctx context.Context) *slog.Logger {
+    if l, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {
+        return l
+    }
+    return slog.Default()
+}
+```
+
+## Middleware: Request ID + Per-Request Logger
+
+```go
+func requestLogger(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start   := time.Now()
+        traceID := newTraceID()
+        log := slog.With(
+            "trace_id", traceID,
+            "method",   r.Method,
+            "path",     r.URL.Path,
+        )
+        ctx := withLogger(r.Context(), log)
+        log.Info("request started")
+
+        rw := &statusWriter{ResponseWriter: w}
+        next.ServeHTTP(rw, r.WithContext(ctx))
+
+        log.Info("request completed",
+            "status",   rw.status,
+            "duration", time.Since(start).String(),
+        )
     })
 }
 ```
 
-## Running Benchmarks
-
-```bash
-go test -bench=.                                  # run all benchmarks
-go test -bench=BenchmarkWordCount -benchtime=5s   # run for 5 seconds
-go test -bench=. -benchmem                        # include allocation stats
-go test -bench=. -count=3                         # run 3 times for stability
-```
-
-Sample output:
-```
-BenchmarkWordCount-8   500000   2345 ns/op   512 B/op   3 allocs/op
-```
-
-- `500000` — number of iterations
-- `2345 ns/op` — nanoseconds per operation
-- `512 B/op` — bytes allocated per operation
-- `3 allocs/op` — heap allocations per operation
-
-## CPU Profiling
-
-```bash
-go test -bench=BenchmarkWordCount -cpuprofile=cpu.prof
-go tool pprof cpu.prof
-# Inside pprof shell:
-(pprof) top10
-(pprof) list wordCount
-(pprof) web      # opens flame graph in browser (requires graphviz)
-```
-
-## Memory Profiling
-
-```bash
-go test -bench=. -memprofile=mem.prof -benchmem
-go tool pprof mem.prof
-(pprof) top --alloc_objects
-```
-
-## Profiling a Running Server
+## Log Levels
 
 ```go
-import _ "net/http/pprof"
-// registers /debug/pprof/ handlers on the default mux
+slog.Debug(...)  // verbose dev info
+slog.Info(...)   // normal operation
+slog.Warn(...)   // unexpected but recoverable
+slog.Error(...)  // failures requiring attention
 ```
-
-```bash
-go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
-```
-
-## Common Optimisation Techniques
-
-| Issue | Fix |
-|-------|-----|
-| Too many allocations | Pre-allocate slices; use `sync.Pool` |
-| String concatenation in loop | Use `strings.Builder` |
-| Map read contention | Shard or use `sync.Map` |
-| Excessive copying | Pass pointers; use `[]byte` instead of `string` |
 
 ## Labs
 
-### Lab 1: First Benchmark — Reading the Output
+### Lab 1: Default slog — Your First Structured Log
 
-**What you'll practise:** Writing your first `BenchmarkXxx` function and interpreting the ns/op, B/op, and allocs/op columns.
+**What you'll practise:** Using the global slog functions with key-value pairs and observing the default text output.
 
 **Task:**
-Benchmark a trivial integer addition function to learn the benchmark skeleton, then read what the output columns mean.
+Write a program that logs several events using `slog.Info`, `slog.Warn`, and `slog.Error` with meaningful key-value attributes, then observe the default text format output.
 
 **Steps:**
-1. Create `bench_test.go` in `day-26/`
-2. Write a `BenchmarkAdd` function using the `b.N` loop
-3. Run with `go test -bench=. -benchmem` and identify each column
+1. Create `main.go` with `package main`
+2. Import `"log/slog"` and `"errors"`
+3. Call `slog.Info`, `slog.Warn`, and `slog.Error` with at least two key-value pairs each
 
 ```go
 package main
 
-import "testing"
+import (
+    "errors"
+    "log/slog"
+)
 
-func add(a, b int) int { return a + b }
-
-func BenchmarkAdd(b *testing.B) {
-    for i := 0; i < b.N; i++ {
-        add(3, 4)
-    }
+func main() {
+    slog.Info("server started", "addr", ":8080", "pid", 1234)
+    slog.Warn("high memory usage", "percent", 87.5, "threshold", 80)
+    err := errors.New("connection refused")
+    slog.Error("database unreachable", "err", err, "host", "localhost:5432")
 }
 ```
 
 **Expected output:**
 ```
-BenchmarkAdd-8   1000000000   0.23 ns/op   0 B/op   0 allocs/op
+2024/01/15 10:00:00 INFO server started addr=:8080 pid=1234
+2024/01/15 10:00:00 WARN high memory usage percent=87.5 threshold=80
+2024/01/15 10:00:00 ERROR database unreachable err="connection refused" host=localhost:5432
 ```
 
-**Checkpoint:** The benchmark runs without error. You can explain what `b.N`, `ns/op`, `B/op`, and `allocs/op` each mean.
+**Checkpoint:** Three log lines appear with key=value pairs. The level prefix (INFO/WARN/ERROR) is visible in each line.
 
 ---
 
-### Lab 2: Compare Implementations — String Concatenation vs Builder
+### Lab 2: JSON Handler — Structured Output for Production
 
-**What you'll practise:** Benchmarking two approaches to string building and observing the dramatic difference in allocations.
+**What you'll practise:** Switching to `slog.NewJSONHandler` and comparing JSON vs text output.
 
 **Task:**
-Write two string-joining functions — one using `+` in a loop, one using `strings.Builder` — and benchmark both with `-benchmem` to see how allocations differ.
+Create a JSON-format logger, set it as the global default, and log the same messages as Lab 1. Compare the output structure.
 
 **Steps:**
-1. Write `joinConcat(words []string) string` using `+=`
-2. Write `joinBuilder(words []string) string` using `strings.Builder`
-3. Benchmark both with the same input slice
-4. Record the `allocs/op` difference in a comment
+1. Add `"os"` to your imports
+2. Create a JSON handler writing to `os.Stdout`
+3. Wrap it in `slog.New` and call `slog.SetDefault`
+4. Re-run the same three log calls and observe the difference
 
 ```go
-func joinConcat(words []string) string {
-    s := ""
-    for _, w := range words {
-        s += w + " "
-    }
-    return s
-}
+import (
+    "log/slog"
+    "os"
+)
 
-func joinBuilder(words []string) string {
-    var b strings.Builder
-    for _, w := range words {
-        b.WriteString(w)
-        b.WriteByte(' ')
-    }
-    return b.String()
-}
+func main() {
+    logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+    slog.SetDefault(logger)
 
-func BenchmarkJoinConcat(b *testing.B) {
-    words := strings.Fields(strings.Repeat("the quick brown fox ", 50))
-    b.ResetTimer()
-    for i := 0; i < b.N; i++ {
-        joinConcat(words)
-    }
+    slog.Info("server started", "addr", ":8080", "pid", 1234)
+    slog.Warn("high memory usage", "percent", 87.5, "threshold", 80)
 }
 ```
 
 **Expected output:**
 ```
-BenchmarkJoinConcat-8    50000   25000 ns/op   12345 B/op   199 allocs/op
-BenchmarkJoinBuilder-8  500000    2300 ns/op     512 B/op     2 allocs/op
+{"time":"2024-01-15T10:00:00Z","level":"INFO","msg":"server started","addr":":8080","pid":1234}
+{"time":"2024-01-15T10:00:00Z","level":"WARN","msg":"high memory usage","percent":87.5,"threshold":80}
 ```
 
-**Checkpoint:** `joinBuilder` has fewer than 5 allocs/op. `joinConcat` has allocs proportional to the number of words (one per concatenation).
+**Checkpoint:** Each log line is valid JSON. Pipe through `| python3 -m json.tool` to pretty-print and confirm the structure.
 
 ---
 
-### Lab 3: b.ResetTimer and b.StopTimer — Excluding Setup Time
+### Lab 3: Log Levels — Controlling Verbosity
 
-**What you'll practise:** Using `b.ResetTimer` and `b.StopTimer`/`b.StartTimer` to measure only the code under test, not its setup.
+**What you'll practise:** Filtering log output by setting a minimum log level with `slog.HandlerOptions`.
 
 **Task:**
-Benchmark a function that requires expensive setup (loading a large word list). Use `b.StopTimer`/`b.StartTimer` to exclude the setup cost from each iteration.
+Configure a handler with `Level: slog.LevelWarn` and observe that `Debug` and `Info` calls are silently dropped.
 
 **Steps:**
-1. Write a `BenchmarkWithSetup` that builds a large string outside the loop using `b.ResetTimer`
-2. Write a `BenchmarkPerIterSetup` that resets per-iteration state using `b.StopTimer`/`b.StartTimer`
-3. Run both and compare — the per-iter setup benchmark should show higher ns/op
+1. Create a handler with `&slog.HandlerOptions{Level: slog.LevelWarn}`
+2. Log one message at each level: Debug, Info, Warn, Error
+3. Verify only Warn and Error appear in the output
 
 ```go
-func BenchmarkWithSetup(b *testing.B) {
-    // one-time setup
-    text := strings.Repeat("go is fast ", 10000)
-    b.ResetTimer() // start measuring from here
+opts   := &slog.HandlerOptions{Level: slog.LevelWarn}
+logger := slog.New(slog.NewJSONHandler(os.Stdout, opts))
 
-    for i := 0; i < b.N; i++ {
-        wordCount(text)
-    }
+logger.Debug("this is debug", "detail", "verbose")
+logger.Info("this is info", "user", "alice")
+logger.Warn("this is warn", "latency_ms", 450)
+logger.Error("this is error", "err", errors.New("timeout"))
+```
+
+**Expected output:**
+```
+{"time":"...","level":"WARN","msg":"this is warn","latency_ms":450}
+{"time":"...","level":"ERROR","msg":"this is error","err":"timeout"}
+```
+
+**Checkpoint:** Exactly two lines appear. The Debug and Info lines are absent.
+
+---
+
+### Lab 4: Structured Attributes — Child Loggers with Permanent Fields
+
+**What you'll practise:** Using `slog.With` to create a child logger that embeds permanent key-value fields on every line.
+
+**Task:**
+Create a base logger, then derive a child logger with `service` and `version` fields. All log calls through the child automatically include those fields.
+
+**Steps:**
+1. Create a JSON logger as the base
+2. Call `.With("service", "api", "version", "1.0.0")` to produce a child logger
+3. Log several messages through the child and observe the permanent fields
+
+```go
+base := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+log  := base.With("service", "api", "version", "1.0.0")
+
+log.Info("starting up", "port", 8080)
+log.Info("connected to db", "host", "localhost")
+log.Error("request failed", "path", "/users", "err", errors.New("not found"))
+```
+
+**Expected output:**
+```
+{"time":"...","level":"INFO","msg":"starting up","service":"api","version":"1.0.0","port":8080}
+{"time":"...","level":"INFO","msg":"connected to db","service":"api","version":"1.0.0","host":"localhost"}
+{"time":"...","level":"ERROR","msg":"request failed","service":"api","version":"1.0.0","path":"/users","err":"not found"}
+```
+
+**Checkpoint:** Every line contains `"service":"api"` and `"version":"1.0.0"` without adding them to each individual call.
+
+---
+
+### Lab 5: Context Logging — Request-Scoped Logger
+
+**What you'll practise:** Storing and retrieving a `*slog.Logger` from `context.Context` using a typed key.
+
+**Task:**
+Write `WithLogger` and `LoggerFrom` helper functions. Store a logger enriched with a request ID in context and retrieve it inside a simulated handler function.
+
+**Steps:**
+1. Define a private `type logKey struct{}`
+2. Write `WithLogger(ctx, log)` and `LoggerFrom(ctx)` functions
+3. Simulate a handler that reads the logger from context — the request ID flows through automatically
+
+```go
+type logKey struct{}
+
+func WithLogger(ctx context.Context, log *slog.Logger) context.Context {
+    return context.WithValue(ctx, logKey{}, log)
 }
 
-func BenchmarkPerIterSetup(b *testing.B) {
-    for i := 0; i < b.N; i++ {
-        b.StopTimer()
-        text := strings.Repeat("go is fast ", 10000) // excluded
-        b.StartTimer()
-
-        wordCount(text)
+func LoggerFrom(ctx context.Context) *slog.Logger {
+    if l, ok := ctx.Value(logKey{}).(*slog.Logger); ok {
+        return l
     }
+    return slog.Default()
+}
+
+func handleRequest(ctx context.Context) {
+    log := LoggerFrom(ctx)
+    log.Info("processing request")
+    log.Info("fetching user", "user_id", 42)
+}
+
+func main() {
+    base := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+    log  := base.With("request_id", "req-abc-123")
+    ctx  := WithLogger(context.Background(), log)
+    handleRequest(ctx)
 }
 ```
 
 **Expected output:**
 ```
-BenchmarkWithSetup-8       5000   300000 ns/op
-BenchmarkPerIterSetup-8    5000   305000 ns/op
+{"time":"...","level":"INFO","msg":"processing request","request_id":"req-abc-123"}
+{"time":"...","level":"INFO","msg":"fetching user","request_id":"req-abc-123","user_id":42}
 ```
 
-**Checkpoint:** `BenchmarkWithSetup` runs faster because setup happens once. `BenchmarkPerIterSetup` shows slightly higher ns/op from repeated allocations inside the loop.
+**Checkpoint:** Both log lines carry `"request_id"` without `handleRequest` referencing the request ID directly.
 
 ---
 
-### Lab 4: Sub-benchmarks — Comparing Multiple Variants with b.Run
+### Lab 6: HTTP Request Middleware — Logging Every Request
 
-**What you'll practise:** Organising related benchmarks as sub-benchmarks using `b.Run` for structured comparison output.
+**What you'll practise:** Building an `http.Handler` middleware that logs method, path, status code, and duration for every incoming request.
 
 **Task:**
-Benchmark three word-count implementations as sub-benchmarks under a single `BenchmarkWordCount` parent. Compare their ns/op and allocs/op side by side.
+Write a `requestLogger` middleware. It wraps `ResponseWriter` to capture the status code, then logs a completion entry with timing after the handler returns.
 
 **Steps:**
-1. Write three `wordCount` functions: `countSplit`, `countFields`, `countScanner`
-2. Use `b.Run("Split", func(b *testing.B){...})` pattern
-3. Run with `go test -bench=BenchmarkWordCount -benchmem`
+1. Define `statusWriter` embedding `http.ResponseWriter` with a `status int` field and a `WriteHeader` override
+2. Write `requestLogger(log *slog.Logger, next http.Handler) http.Handler`
+3. Generate a short request ID with `fmt.Sprintf("%08x", rand.Int32())`
+4. Register a simple handler at `/hello`, wrap it, and start the server
 
 ```go
-func BenchmarkWordCount(b *testing.B) {
-    text := strings.Repeat("the quick brown fox jumps over the lazy dog ", 1000)
+type statusWriter struct {
+    http.ResponseWriter
+    status int
+}
 
-    b.Run("Split", func(b *testing.B) {
-        for i := 0; i < b.N; i++ { countSplit(text) }
+func (sw *statusWriter) WriteHeader(code int) {
+    sw.status = code
+    sw.ResponseWriter.WriteHeader(code)
+}
+
+func requestLogger(log *slog.Logger, next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
+        reqID := fmt.Sprintf("%08x", rand.Int32())
+        l     := log.With("request_id", reqID, "method", r.Method, "path", r.URL.Path)
+
+        sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+        next.ServeHTTP(sw, r.WithContext(WithLogger(r.Context(), l)))
+
+        l.Info("request completed",
+            "status",      sw.status,
+            "duration_ms", time.Since(start).Milliseconds(),
+        )
     })
-    b.Run("Fields", func(b *testing.B) {
-        for i := 0; i < b.N; i++ { countFields(text) }
-    })
-    b.Run("Scanner", func(b *testing.B) {
-        for i := 0; i < b.N; i++ { countScanner(text) }
-    })
 }
 ```
 
 **Expected output:**
 ```
-BenchmarkWordCount/Split-8     5000   280000 ns/op   81920 B/op   3 allocs/op
-BenchmarkWordCount/Fields-8    5000   220000 ns/op   40960 B/op   2 allocs/op
-BenchmarkWordCount/Scanner-8   8000   195000 ns/op    4096 B/op   2 allocs/op
+{"time":"...","level":"INFO","msg":"request completed","request_id":"1a2b3c4d","method":"GET","path":"/hello","status":200,"duration_ms":0}
 ```
 
-**Checkpoint:** Three sub-benchmark lines appear under one parent. You can identify the fastest implementation by ns/op.
+**Checkpoint:** Run `go run .` then `curl http://localhost:8080/hello`. One structured JSON log line appears per request with a unique `request_id`.
 
 ---
 
-### Lab 5: CPU Profiling — Finding the Hot Path
+### Lab 7: Custom Handler — Colourised Development Output
 
-**What you'll practise:** Generating a CPU profile and navigating it with `go tool pprof` to find where time is spent.
-
-**Task:**
-Run the slowest word-count benchmark with `-cpuprofile`, then use `pprof top10` and `list` to identify which function consumes the most CPU.
-
-**Steps:**
-1. Run: `go test -bench=BenchmarkWordCount/Split -cpuprofile=cpu.prof -benchtime=5s`
-2. Open the profile: `go tool pprof cpu.prof`
-3. In the pprof shell, run `top10` to see top CPU consumers
-4. Run `list countSplit` to see annotated source lines
-
-```bash
-go test -bench=BenchmarkWordCount/Split -cpuprofile=cpu.prof -benchtime=5s
-go tool pprof cpu.prof
-```
-
-```
-(pprof) top10
-(pprof) list countSplit
-(pprof) web     # opens flame graph in browser (requires graphviz)
-```
-
-**Expected output:**
-```
-Showing top 10 nodes out of 42
-      flat  flat%   sum%        cum   cum%
-     450ms 45.00% 45.00%      450ms 45.00%  strings.genSplit
-     ...
-```
-
-**Checkpoint:** You can name the top two functions by CPU time and explain which line of `countSplit` is the hot path.
-
----
-
-### Lab 6: Memory Profiling — Finding the Biggest Allocator
-
-**What you'll practise:** Generating a memory profile and using `pprof -alloc_space` to find the function allocating the most heap memory.
+**What you'll practise:** Implementing the `slog.Handler` interface to produce human-readable, ANSI-coloured output for local development.
 
 **Task:**
-Profile memory allocations for the three word-count implementations. Identify which allocates the most bytes and why.
+Build a `ColorHandler` that prints records in the format `[LEVEL] message key=value …` with a different colour per level.
 
 **Steps:**
-1. Run: `go test -bench=BenchmarkWordCount -memprofile=mem.prof -benchmem`
-2. Open the profile: `go tool pprof -alloc_space mem.prof`
-3. Run `top10` to see allocation hot spots
-4. Compare allocation sizes between implementations
-
-```bash
-go test -bench=BenchmarkWordCount -memprofile=mem.prof -benchmem
-go tool pprof -alloc_space mem.prof
-```
-
-```
-(pprof) top10
-(pprof) list countSplit
-```
-
-**Expected output:**
-```
-Showing top 10 nodes out of 18
-      flat  flat%   sum%        cum   cum%
-    512MB 60.00% 60.00%      512MB 60.00%  strings.genSplit
-    ...
-```
-
-**Checkpoint:** You can explain why `countSplit` allocates more than `countScanner` and which pprof metric (`alloc_space` vs `inuse_space`) you used and why.
-
----
-
-### Lab 7: Trace — Observing Goroutine Scheduling
-
-**What you'll practise:** Generating an execution trace with `go test -trace` and viewing it with `go tool trace` to observe goroutine scheduling and GC activity.
-
-**Task:**
-Run one benchmark with trace enabled, open the trace viewer, and identify at least one GC pause and the goroutine that ran the benchmark.
-
-**Steps:**
-1. Run: `go test -bench=BenchmarkWordCount/Scanner -trace=trace.out -benchtime=1s`
-2. Open: `go tool trace trace.out` (opens browser)
-3. Click "Goroutine analysis" and find the test goroutine
-4. Click "View trace" and zoom into a GC event
-
-```bash
-go test -bench=BenchmarkWordCount/Scanner -trace=trace.out -benchtime=1s
-go tool trace trace.out
-```
-
-**Expected output:**
-A browser window opens with a timeline view showing goroutine execution, GC pauses, and system calls.
-
-**Checkpoint:** You can locate a GC pause in the trace timeline and describe what "STW" (stop-the-world) looks like visually.
-
----
-
-### Final Lab (Project): Profile a Word-Frequency Counter
-
-**What you'll practise:** Writing three benchmark implementations, profiling the slowest, and producing a comparison table that proves the optimisation.
-
-**Task:**
-Write three implementations of a word-frequency counter, benchmark all three with `-benchmem`, generate a CPU profile for the slowest, and optimise it. Present your findings as a comparison table in a comment.
-
-**Steps:**
-1. Write three implementations of a word-frequency counter:
-   - V1: `strings.Split` + map (baseline)
-   - V2: `strings.Fields` + map with pre-size hint
-   - V3: `bufio.Scanner` with `ScanWords` + map
-2. Benchmark all three with `-benchmem`
-3. Generate a CPU profile for the slowest implementation and identify the hot path
-4. Optimise and re-benchmark to show improvement
+1. Define `ColorHandler` implementing `slog.Handler` (four methods: `Enabled`, `Handle`, `WithAttrs`, `WithGroup`)
+2. Map levels to ANSI colour codes: DEBUG=cyan, INFO=green, WARN=yellow, ERROR=red
+3. Format attributes as `key=value` pairs on the same line
+4. Set it as the global default and log at all four levels to confirm the colours
 
 ```go
-// V1 — baseline
-func countSplit(text string) map[string]int {
-    freq := map[string]int{}
-    for _, w := range strings.Split(text, " ") {
-        if w != "" { freq[w]++ }
+const (
+    colorReset  = "\033[0m"
+    colorCyan   = "\033[36m"
+    colorGreen  = "\033[32m"
+    colorYellow = "\033[33m"
+    colorRed    = "\033[31m"
+)
+
+func levelColor(l slog.Level) string {
+    switch {
+    case l < slog.LevelInfo:  return colorCyan
+    case l < slog.LevelWarn:  return colorGreen
+    case l < slog.LevelError: return colorYellow
+    default:                   return colorRed
     }
-    return freq
-}
-
-// V2 — pre-sized map
-func countFields(text string) map[string]int {
-    words := strings.Fields(text)
-    freq  := make(map[string]int, len(words)/2)
-    for _, w := range words { freq[w]++ }
-    return freq
-}
-
-// V3 — scanner (lowest allocation)
-func countScanner(text string) map[string]int {
-    freq := make(map[string]int, 64)
-    sc   := bufio.NewScanner(strings.NewReader(text))
-    sc.Split(bufio.ScanWords)
-    for sc.Scan() { freq[sc.Text()]++ }
-    return freq
 }
 ```
 
 **Expected output:**
 ```
-BenchmarkWordCount/Split-8     5000   280000 ns/op   81920 B/op   3 allocs/op
-BenchmarkWordCount/Fields-8    5000   220000 ns/op   40960 B/op   2 allocs/op
-BenchmarkWordCount/Scanner-8   8000   195000 ns/op    4096 B/op   2 allocs/op
+[DEBUG] cache miss key=user:42
+[INFO]  server started addr=:8080
+[WARN]  slow query duration_ms=312
+[ERROR] db connection failed err="connection refused"
+```
+(Each level prefix appears in a distinct colour in a real terminal.)
+
+**Checkpoint:** Run `go run .` and confirm that each level label is rendered in a different colour. Text is readable and attributes appear inline.
+
+---
+
+### Final Lab (Project): Structured Logging with log/slog — Notes API
+
+**What you'll practise:** Combining a JSON handler, request middleware, and context-scoped logging into a complete HTTP service.
+
+**Task:**
+Add structured logging to the Notes API from Day 22 using a JSON `slog.Logger`, a `requestLogger` middleware, and per-request logger injection via context.
+
+**Steps:**
+1. Initialise a JSON `slog.Logger` in `main`, set as default
+2. Write a `requestLogger` middleware that logs method, path, status, duration, and trace ID
+3. Inject per-request logger into context; use it in handlers
+4. Log at `Info` for successful operations, `Error` for failures (with `"err"` attribute)
+5. Make log level configurable via `LOG_LEVEL` env var
+
+```go
+level := slog.LevelInfo
+if os.Getenv("LOG_LEVEL") == "debug" {
+    level = slog.LevelDebug
+}
+logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: level,
+}))
+slog.SetDefault(logger)
 ```
 
-**Checkpoint:** All three benchmarks run. Scanner is fastest or lowest-allocation. A CPU profile identifies the hot function. Run benchmarks with: `go test -bench=. -benchmem`
+**Expected output:**
+```
+{"time":"...","level":"INFO","msg":"server started","addr":":8080"}
+{"time":"...","level":"INFO","msg":"request completed","method":"POST","path":"/notes","status":201,"duration_ms":2}
+```
 
-**Extension ideas:** try `sync.Pool` to reduce allocations; experiment with `bytes.FieldsFunc` to avoid the `strings` package entirely.
+**Checkpoint:** Run `go run .` and `curl -X POST localhost:8080/notes -d '{"title":"test"}'`. One JSON log line appears per request. Running with `LOG_LEVEL=debug go run .` reveals additional debug lines.
+
+**Extension ideas:** implement a custom `slog.Handler` that redacts PII fields; export trace IDs in response headers (`X-Trace-ID`).
 
 ## Official Documentation
 
-- [`testing`](https://pkg.go.dev/testing) — `B` (benchmark type), `B.N`, `B.ResetTimer`, `B.RunParallel`, `PB.Next`, `B.ReportAllocs`
-- [`strings`](https://pkg.go.dev/strings) — `Split`, `Fields`, `Builder`, `Repeat` used in benchmark examples
-- [`bufio`](https://pkg.go.dev/bufio) — `Scanner`, `ScanWords` split function for the V3 implementation
-- [`sync`](https://pkg.go.dev/sync) — `Pool` for reducing allocations
-- [`net/http/pprof`](https://pkg.go.dev/net/http/pprof) — registers `/debug/pprof/` handlers on a running server
-- [Go Blog: Profiling Go Programs](https://go.dev/blog/pprof)
-- [Go Blog: Benchmarks](https://go.dev/testing/#hdr-Benchmarks)
-- [`runtime`](https://pkg.go.dev/runtime) — `NumCPU` used in semaphore patterns
+- [`log/slog`](https://pkg.go.dev/log/slog) — `Logger`, `Handler`, `NewJSONHandler`, `NewTextHandler`, `HandlerOptions`, `SetDefault`, `With`, `Info`, `Error`, `Debug`, `Warn`, `LevelInfo`, `LevelDebug`
+- [`context`](https://pkg.go.dev/context) — `WithValue`, `Value` for injecting per-request loggers
+- [`os`](https://pkg.go.dev/os) — `Stdout`, `Getenv` for output target and log level config
+- [`net/http`](https://pkg.go.dev/net/http) — `Handler`, `ResponseWriter`, `Request` used in middleware
+- [`time`](https://pkg.go.dev/time) — `Now`, `Since` for request duration measurement
+- [Go Blog: Structured Logging with slog](https://go.dev/blog/slog) — official introduction to `log/slog`

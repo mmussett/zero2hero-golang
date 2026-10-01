@@ -1,132 +1,189 @@
 package main
 
 import (
-	"context"
+	"encoding/csv"
 	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
+	"path/filepath"
+	"strconv"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+type Task struct {
+	ID        int       `json:"id"`
+	Text      string    `json:"text"`
+	Done      bool      `json:"done"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
-func logging(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		fmt.Printf("%s %s %v\n", r.Method, r.URL.Path, time.Since(start).Round(time.Microsecond))
-	})
+func dataPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".todo.json")
 }
 
-func setupRoutes() http.Handler {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /echo", func(w http.ResponseWriter, r *http.Request) {
-		msg := r.URL.Query().Get("msg")
-		if msg == "" {
-			msg = "hello"
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"echo": msg})
-	})
-
-	mux.HandleFunc("POST /echo", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		var payload map[string]any
-		if err := json.Unmarshal(body, &payload); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
-			return
-		}
-		writeJSON(w, http.StatusOK, payload)
-	})
-
-	mux.HandleFunc("GET /headers", func(w http.ResponseWriter, r *http.Request) {
-		headers := make(map[string]string)
-		for k, v := range r.Header {
-			if len(v) > 0 {
-				headers[k] = v[0]
-			}
-		}
-		writeJSON(w, http.StatusOK, headers)
-	})
-
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-
-	return logging(mux)
+func load() ([]Task, error) {
+	data, err := os.ReadFile(dataPath())
+	if os.IsNotExist(err) {
+		return []Task{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var tasks []Task
+	return tasks, json.Unmarshal(data, &tasks)
 }
 
-func runServer(addr string) {
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      setupRoutes(),
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
+func save(tasks []Task) error {
+	data, err := json.MarshalIndent(tasks, "", "  ")
+	if err != nil {
+		return err
 	}
-
-	go func() {
-		fmt.Printf("Server listening on http://%s\n", addr)
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		}
-	}()
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	fmt.Println("\nShutting down gracefully...")
-	srv.Shutdown(ctx)
+	return os.WriteFile(dataPath(), data, 0o644)
 }
 
-func runClient(base string) {
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	resp, err := client.Get(base + "/echo?msg=hello+world")
-	if err == nil {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		fmt.Printf("GET /echo:    %s", body)
+func nextID(tasks []Task) int {
+	max := 0
+	for _, t := range tasks {
+		if t.ID > max {
+			max = t.ID
+		}
 	}
-
-	resp, err = client.Get(base + "/health")
-	if err == nil {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		fmt.Printf("GET /health:  %s", body)
-	}
-
-	resp, err = client.Get(base + "/headers")
-	if err == nil {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		fmt.Printf("GET /headers: %s", body)
-	}
+	return max + 1
 }
 
 func main() {
-	addr   := flag.String("addr", "localhost:8080", "server address")
-	client := flag.Bool("client", false, "run as HTTP client instead of server")
-	flag.Parse()
+	var showAll bool
 
-	if *client {
-		runClient("http://" + *addr)
-	} else {
-		runServer(*addr)
+	root := &cobra.Command{Use: "todo", Short: "A simple todo list manager"}
+
+	root.AddCommand(&cobra.Command{
+		Use:   "add [task text]",
+		Short: "Add a new task",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tasks, err := load()
+			if err != nil {
+				return err
+			}
+			t := Task{ID: nextID(tasks), Text: args[0], CreatedAt: time.Now()}
+			tasks = append(tasks, t)
+			if err := save(tasks); err != nil {
+				return err
+			}
+			fmt.Printf("Added task #%d: %q\n", t.ID, t.Text)
+			return nil
+		},
+	})
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List tasks",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tasks, err := load()
+			if err != nil {
+				return err
+			}
+			if len(tasks) == 0 {
+				fmt.Println("No tasks.")
+				return nil
+			}
+			for _, t := range tasks {
+				if !showAll && t.Done {
+					continue
+				}
+				status := "[ ]"
+				if t.Done {
+					status = "[x]"
+				}
+				fmt.Printf("%s #%-3d %s\n", status, t.ID, t.Text)
+			}
+			return nil
+		},
+	}
+	listCmd.Flags().BoolVar(&showAll, "all", false, "Show completed tasks too")
+	root.AddCommand(listCmd)
+
+	root.AddCommand(&cobra.Command{
+		Use:   "done [id]",
+		Short: "Mark a task as done",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.Atoi(args[0])
+			if err != nil {
+				return fmt.Errorf("invalid id: %s", args[0])
+			}
+			tasks, err := load()
+			if err != nil {
+				return err
+			}
+			for i, t := range tasks {
+				if t.ID == id {
+					tasks[i].Done = true
+					if err := save(tasks); err != nil {
+						return err
+					}
+					fmt.Printf("Marked #%d as done: %q\n", id, t.Text)
+					return nil
+				}
+			}
+			return fmt.Errorf("task #%d not found", id)
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:   "delete [id]",
+		Short: "Delete a task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.Atoi(args[0])
+			if err != nil {
+				return fmt.Errorf("invalid id: %s", args[0])
+			}
+			tasks, err := load()
+			if err != nil {
+				return err
+			}
+			for i, t := range tasks {
+				if t.ID == id {
+					tasks = append(tasks[:i], tasks[i+1:]...)
+					if err := save(tasks); err != nil {
+						return err
+					}
+					fmt.Printf("Deleted #%d: %q\n", id, t.Text)
+					return nil
+				}
+			}
+			return fmt.Errorf("task #%d not found", id)
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:   "export",
+		Short: "Export tasks as CSV to stdout",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tasks, err := load()
+			if err != nil {
+				return err
+			}
+			w := csv.NewWriter(os.Stdout)
+			w.Write([]string{"id", "text", "done", "created_at"})
+			for _, t := range tasks {
+				w.Write([]string{
+					strconv.Itoa(t.ID),
+					t.Text,
+					strconv.FormatBool(t.Done),
+					t.CreatedAt.Format(time.RFC3339),
+				})
+			}
+			w.Flush()
+			return w.Error()
+		},
+	})
+
+	if err := root.Execute(); err != nil {
+		os.Exit(1)
 	}
 }

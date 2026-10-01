@@ -1,189 +1,136 @@
 package main
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
-	"time"
-
-	"github.com/spf13/cobra"
+	"strings"
 )
 
-type Task struct {
-	ID        int       `json:"id"`
-	Text      string    `json:"text"`
-	Done      bool      `json:"done"`
-	CreatedAt time.Time `json:"created_at"`
+type LogLevel int
+
+const (
+	LevelDebug LogLevel = iota
+	LevelInfo
+	LevelWarn
+	LevelError
+)
+
+func (l LogLevel) String() string {
+	return [...]string{"debug", "info", "warn", "error"}[l]
 }
 
-func dataPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".todo.json")
+func (l LogLevel) MarshalJSON() ([]byte, error) {
+	return json.Marshal(l.String())
 }
 
-func load() ([]Task, error) {
-	data, err := os.ReadFile(dataPath())
-	if os.IsNotExist(err) {
-		return []Task{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var tasks []Task
-	return tasks, json.Unmarshal(data, &tasks)
-}
-
-func save(tasks []Task) error {
-	data, err := json.MarshalIndent(tasks, "", "  ")
-	if err != nil {
+func (l *LogLevel) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
 		return err
 	}
-	return os.WriteFile(dataPath(), data, 0o644)
+	switch strings.ToLower(s) {
+	case "debug":
+		*l = LevelDebug
+	case "info":
+		*l = LevelInfo
+	case "warn":
+		*l = LevelWarn
+	case "error":
+		*l = LevelError
+	default:
+		return fmt.Errorf("unknown log level %q", s)
+	}
+	return nil
 }
 
-func nextID(tasks []Task) int {
-	max := 0
-	for _, t := range tasks {
-		if t.ID > max {
-			max = t.ID
+type DatabaseConfig struct {
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	Name string `json:"name"`
+}
+
+type Config struct {
+	Server   string         `json:"server"`
+	Port     int            `json:"port"`
+	Database DatabaseConfig `json:"database"`
+	LogLevel LogLevel       `json:"log_level"`
+	Debug    bool           `json:"debug"`
+}
+
+func defaultConfig() Config {
+	return Config{
+		Server:   "localhost",
+		Port:     8080,
+		Database: DatabaseConfig{Host: "localhost", Port: 5432, Name: "mydb"},
+		LogLevel: LevelInfo,
+	}
+}
+
+func loadFromJSON(data []byte) (Config, error) {
+	cfg := defaultConfig()
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, fmt.Errorf("unmarshal: %w", err)
+	}
+	return cfg, nil
+}
+
+func applyEnvOverrides(cfg *Config) {
+	if v := os.Getenv("SERVER_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			cfg.Port = p
 		}
 	}
-	return max + 1
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		var l LogLevel
+		if err := json.Unmarshal([]byte(`"`+v+`"`), &l); err == nil {
+			cfg.LogLevel = l
+		}
+	}
+	if v := os.Getenv("DEBUG"); v == "true" || v == "1" {
+		cfg.Debug = true
+	}
+}
+
+func exportCSV(cfg Config) string {
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	w.Write([]string{"key", "value"})
+	w.Write([]string{"server", cfg.Server})
+	w.Write([]string{"port", strconv.Itoa(cfg.Port)})
+	w.Write([]string{"db_host", cfg.Database.Host})
+	w.Write([]string{"db_port", strconv.Itoa(cfg.Database.Port)})
+	w.Write([]string{"db_name", cfg.Database.Name})
+	w.Write([]string{"log_level", cfg.LogLevel.String()})
+	w.Write([]string{"debug", strconv.FormatBool(cfg.Debug)})
+	w.Flush()
+	return buf.String()
 }
 
 func main() {
-	var showAll bool
+	jsonData := []byte(`{
+		"server": "api.example.com",
+		"port": 443,
+		"database": {"host": "db.example.com", "port": 5432, "name": "prod"},
+		"log_level": "warn",
+		"debug": false
+	}`)
 
-	root := &cobra.Command{Use: "todo", Short: "A simple todo list manager"}
-
-	root.AddCommand(&cobra.Command{
-		Use:   "add [task text]",
-		Short: "Add a new task",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			tasks, err := load()
-			if err != nil {
-				return err
-			}
-			t := Task{ID: nextID(tasks), Text: args[0], CreatedAt: time.Now()}
-			tasks = append(tasks, t)
-			if err := save(tasks); err != nil {
-				return err
-			}
-			fmt.Printf("Added task #%d: %q\n", t.ID, t.Text)
-			return nil
-		},
-	})
-
-	listCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List tasks",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			tasks, err := load()
-			if err != nil {
-				return err
-			}
-			if len(tasks) == 0 {
-				fmt.Println("No tasks.")
-				return nil
-			}
-			for _, t := range tasks {
-				if !showAll && t.Done {
-					continue
-				}
-				status := "[ ]"
-				if t.Done {
-					status = "[x]"
-				}
-				fmt.Printf("%s #%-3d %s\n", status, t.ID, t.Text)
-			}
-			return nil
-		},
-	}
-	listCmd.Flags().BoolVar(&showAll, "all", false, "Show completed tasks too")
-	root.AddCommand(listCmd)
-
-	root.AddCommand(&cobra.Command{
-		Use:   "done [id]",
-		Short: "Mark a task as done",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := strconv.Atoi(args[0])
-			if err != nil {
-				return fmt.Errorf("invalid id: %s", args[0])
-			}
-			tasks, err := load()
-			if err != nil {
-				return err
-			}
-			for i, t := range tasks {
-				if t.ID == id {
-					tasks[i].Done = true
-					if err := save(tasks); err != nil {
-						return err
-					}
-					fmt.Printf("Marked #%d as done: %q\n", id, t.Text)
-					return nil
-				}
-			}
-			return fmt.Errorf("task #%d not found", id)
-		},
-	})
-
-	root.AddCommand(&cobra.Command{
-		Use:   "delete [id]",
-		Short: "Delete a task",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := strconv.Atoi(args[0])
-			if err != nil {
-				return fmt.Errorf("invalid id: %s", args[0])
-			}
-			tasks, err := load()
-			if err != nil {
-				return err
-			}
-			for i, t := range tasks {
-				if t.ID == id {
-					tasks = append(tasks[:i], tasks[i+1:]...)
-					if err := save(tasks); err != nil {
-						return err
-					}
-					fmt.Printf("Deleted #%d: %q\n", id, t.Text)
-					return nil
-				}
-			}
-			return fmt.Errorf("task #%d not found", id)
-		},
-	})
-
-	root.AddCommand(&cobra.Command{
-		Use:   "export",
-		Short: "Export tasks as CSV to stdout",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			tasks, err := load()
-			if err != nil {
-				return err
-			}
-			w := csv.NewWriter(os.Stdout)
-			w.Write([]string{"id", "text", "done", "created_at"})
-			for _, t := range tasks {
-				w.Write([]string{
-					strconv.Itoa(t.ID),
-					t.Text,
-					strconv.FormatBool(t.Done),
-					t.CreatedAt.Format(time.RFC3339),
-				})
-			}
-			w.Flush()
-			return w.Error()
-		},
-	})
-
-	if err := root.Execute(); err != nil {
+	cfg, err := loadFromJSON(jsonData)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
+	applyEnvOverrides(&cfg)
+
+	out, _ := json.MarshalIndent(cfg, "", "  ")
+	fmt.Println("=== Loaded Config (JSON) ===")
+	fmt.Println(string(out))
+
+	fmt.Println("\n=== CSV Export ===")
+	fmt.Print(exportCSV(cfg))
 }

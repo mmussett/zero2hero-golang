@@ -43,22 +43,23 @@ go test ./...
 
 ## Four-Week Progression
 
-| Week | Focus |
-|------|-------|
-| 1 | Foundations — toolchain, types, control flow, pointers, slices, maps, packages, project structure |
-| 2 | Core Language — interfaces, errors, generics, closures, testing |
-| 3 | Intermediate — goroutines, channels, context, file I/O, JSON, CLI, HTTP |
-| 4 | Production — REST APIs, databases, observability, benchmarking, deployment |
+| Week | Days | Focus |
+|------|------|-------|
+| 1 | 1–7 | Foundations — toolchain, types, control flow, pointers, slices, maps, packages |
+| 2 | 8–14 | Core Language — project structure, interfaces, errors, generics, closures, testing |
+| 3 | 15–21 | Intermediate — goroutines, channels, context, file I/O, JSON, CLI |
+| 4 | 22–28 | Production — HTTP, REST APIs, databases, logging, benchmarking, embedding |
+| Advanced | 29–35 | Deep dives — reflection, deployment, capstone, interfaces, channels, goroutines, context |
 
 ## Weekly Milestones
 
-**Week 1:** You understand Go's core model — value semantics, explicit pointers, and why the language is deliberately small. You can structure a Go project idiomatically from day one.
+**Week 1:** You understand Go's core model — value semantics, explicit pointers, and why the language is deliberately small.
 
-**Week 2:** You can model any domain idiomatically and handle errors without panicking.
+**Week 2:** You can structure a Go project idiomatically and model any domain with interfaces, errors, and generics.
 
-**Week 3:** You can write concurrent programs, build CLI tools, and serve HTTP.
+**Week 3:** You can write concurrent programs, handle I/O, and build CLI tools.
 
-**Week 4:** You can design, build, instrument, and deploy a production Go service.
+**Week 4:** You can serve HTTP, back it with a database, instrument it with structured logs, and benchmark it.
 
 ## Reference Docs
 

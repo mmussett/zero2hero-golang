@@ -1,405 +1,399 @@
-# Day 10: Generics
+# Day 10: Error Handling
 
-## Core Concept: Type Parameters
+## Core Concept: Errors Are Values
 
-Generics (added in Go 1.18) let you write functions and types that work over multiple types while remaining type-safe.
-
-```go
-func Map[T, U any](s []T, f func(T) U) []U {
-    result := make([]U, len(s))
-    for i, v := range s {
-        result[i] = f(v)
-    }
-    return result
-}
-
-doubled := Map([]int{1, 2, 3}, func(x int) int { return x * 2 })
-upper   := Map([]string{"a","b"}, strings.ToUpper)
-```
-
-## Constraints
-
-A constraint is an interface that restricts which types a type parameter may be:
+Go's `error` is a plain interface:
 
 ```go
-// comparable — supports == and !=
-func Contains[T comparable](s []T, v T) bool { ... }
-
-// Built-in constraint from golang.org/x/exp/constraints or defined inline:
-type Number interface {
-    int | int8 | int16 | int32 | int64 |
-    float32 | float64
-}
-
-func Sum[T Number](s []T) T {
-    var total T
-    for _, v := range s { total += v }
-    return total
+type error interface {
+    Error() string
 }
 ```
 
-The `~` prefix means "any type whose underlying type is T":
+Errors are returned as regular values — there is no exception mechanism. Handle every error at the call site.
+
+## Creating Errors
 
 ```go
-type Celsius float64
-
-type Temperature interface { ~float64 }
-
-func Max[T Temperature](a, b T) T { if a > b { return a }; return b }
-// Now works with both float64 and Celsius
+errors.New("something went wrong")                         // simple
+fmt.Errorf("parse failed at line %d: %w", line, err)      // with context and wrapping
 ```
 
-## Generic Types
+The `%w` verb **wraps** an error — [`errors.Is`](https://pkg.go.dev/errors#Is) and [`errors.As`](https://pkg.go.dev/errors#As) can unwrap the chain.
+
+## Sentinel Errors
+
+Package-level error variables that callers check by identity:
 
 ```go
-type Stack[T any] struct {
-    items []T
-}
+var (
+    ErrNotFound   = errors.New("not found")
+    ErrPermission = errors.New("permission denied")
+)
 
-func (s *Stack[T]) Push(v T)        { s.items = append(s.items, v) }
-func (s *Stack[T]) Pop() (T, bool) {
-    if len(s.items) == 0 {
-        var zero T; return zero, false
-    }
-    top := s.items[len(s.items)-1]
-    s.items = s.items[:len(s.items)-1]
-    return top, true
-}
-func (s *Stack[T]) Peek() (T, bool) { ... }
-func (s *Stack[T]) Len() int        { return len(s.items) }
+if errors.Is(err, ErrNotFound) { /* ... */ }
 ```
 
-## When to Use Generics vs Interfaces
+## Custom Error Types
 
-- Use **generics** when the algorithm is the same for all types and you need type safety at the call site
-- Use **interfaces** when behaviour differs per type (polymorphism)
-- A function that only needs `any` does not benefit from generics
+Carry structured data in an error:
+
+```go
+type ParseError struct {
+    Line   int
+    Column int
+    Msg    string
+}
+
+func (e *ParseError) Error() string {
+    return fmt.Sprintf("line %d col %d: %s", e.Line, e.Column, e.Msg)
+}
+
+// Retrieve with errors.As:
+var pe *ParseError
+if errors.As(err, &pe) {
+    fmt.Printf("error at line %d\n", pe.Line)
+}
+```
+
+## Error Wrapping Chain
+
+```go
+raw := errors.New("connection refused")
+layer1 := fmt.Errorf("dial failed: %w", raw)
+layer2 := fmt.Errorf("startup: %w", layer1)
+
+errors.Is(layer2, raw)     // true — unwraps the chain
+errors.Unwrap(layer2)      // layer1
+```
+
+## The [`errors`](https://pkg.go.dev/errors) Package
+
+| Function | Purpose |
+|----------|---------|
+| [`errors.New(text)`](https://pkg.go.dev/errors#New) | Create a simple error |
+| [`errors.Is(err, target)`](https://pkg.go.dev/errors#Is) | Identity check through wrapping chain |
+| [`errors.As(err, &target)`](https://pkg.go.dev/errors#As) | Type check through wrapping chain |
+| [`errors.Unwrap(err)`](https://pkg.go.dev/errors#Unwrap) | One level of unwrapping |
 
 ## Labs
 
-### Lab 1: Generic `Min` and `Max`
+### Lab 1: Sentinel Errors
 
-**What you'll practise:** writing a generic function with an `Ordered` constraint and calling it with multiple types.
+**What you'll practise:** defining package-level sentinel errors and checking them with `errors.Is`.
 
 **Task:**
-Write `Min[T constraints.Ordered](a, b T) T` and `Max[T constraints.Ordered](a, b T) T`. Call each with `int`, `float64`, and `string` to confirm the type parameter is inferred correctly.
+Define `ErrNotFound` and `ErrInvalidInput` sentinel errors. Write functions that return them and demonstrate `errors.Is` checking at the call site.
 
 **Steps:**
-1. Import `"cmp"` (Go 1.21+) or define your own `Ordered` constraint using `~int | ~float64 | ~string | ...`
-2. Implement `Min` returning the smaller of two values
-3. Implement `Max` returning the larger of two values
-4. In `main`, call both with at least three different types
+1. Declare `var ErrNotFound = errors.New("not found")` and `var ErrInvalidInput = errors.New("invalid input")`
+2. Write `findUser(id int) (string, error)` that returns `ErrNotFound` when `id <= 0`
+3. Write `validateAge(age int) error` that returns `ErrInvalidInput` when `age < 0 || age > 150`
+4. In `main`, call both functions and use `errors.Is` to branch on the specific error
 
 ```go
-// Using the built-in cmp package (Go 1.21+)
-import "cmp"
+var (
+    ErrNotFound     = errors.New("not found")
+    ErrInvalidInput = errors.New("invalid input")
+)
 
-func Min[T cmp.Ordered](a, b T) T {
-    if a < b {
-        return a
+func findUser(id int) (string, error) {
+    if id <= 0 {
+        return "", ErrNotFound
     }
-    return b
+    return fmt.Sprintf("user-%d", id), nil
 }
 
-func Max[T cmp.Ordered](a, b T) T {
-    if a > b {
-        return a
+func validateAge(age int) error {
+    if age < 0 || age > 150 {
+        return ErrInvalidInput
     }
-    return b
+    return nil
+}
+
+// In main:
+if errors.Is(err, ErrNotFound) {
+    fmt.Println("user does not exist")
 }
 ```
 
 **Expected output:**
 ```
-Min(3, 7) = 3
-Min(3.14, 2.71) = 2.71
-Min("banana", "apple") = apple
-Max(3, 7) = 7
+findUser(-1): not found
+validateAge(200): invalid input
+findUser(42): user-42
 ```
 
-**Checkpoint:** The compiler infers the type parameter without explicit instantiation (`Min(3, 7)` not `Min[int](3, 7)`).
+**Checkpoint:** `errors.Is(err, ErrNotFound)` returns true for errors returned by `findUser` with a non-positive id.
 
 ---
 
-### Lab 2: Generic `Stack[T any]`
+### Lab 2: Custom Error Type with `errors.As`
 
-**What you'll practise:** generic types — a parameterised struct with multiple methods.
+**What you'll practise:** implementing the `error` interface on a struct and extracting fields with `errors.As`.
 
 **Task:**
-Implement `Stack[T any]` with `Push(v T)`, `Pop() (T, bool)`, `Peek() (T, bool)`, `Len() int`, and `IsEmpty() bool`. Test it with both `int` and `string`.
+Define `ParseError{Line int, Col int, Msg string}` implementing `error`. Write a parser function that returns it. Use `errors.As` to extract the line number at the call site.
 
 **Steps:**
-1. Declare `type Stack[T any] struct { items []T }`
-2. Implement all five methods; `Pop` and `Peek` must return `(T, bool)` — return the zero value and `false` when empty
-3. Write a test that pushes three ints, peeks, pops all three, and verifies order is LIFO
-4. Write a second test using `string`
+1. Define `type ParseError struct { Line, Col int; Msg string }`
+2. Implement `func (e *ParseError) Error() string` returning `"line N col C: Msg"`
+3. Write `parseToken(s string, line, col int) error` returning `&ParseError` for invalid input
+4. At the call site, use `errors.As(err, &pe)` and print `pe.Line`
 
 ```go
-type Stack[T any] struct {
-    items []T
+type ParseError struct {
+    Line int
+    Col  int
+    Msg  string
 }
 
-func (s *Stack[T]) Push(v T) { s.items = append(s.items, v) }
+func (e *ParseError) Error() string {
+    return fmt.Sprintf("line %d col %d: %s", e.Line, e.Col, e.Msg)
+}
 
-func (s *Stack[T]) Pop() (T, bool) {
-    if len(s.items) == 0 {
-        var zero T
-        return zero, false
+func parseToken(s string, line, col int) error {
+    if s == "" {
+        return &ParseError{Line: line, Col: col, Msg: "empty token"}
     }
-    top := s.items[len(s.items)-1]
-    s.items = s.items[:len(s.items)-1]
-    return top, true
+    return nil
 }
 
-func (s *Stack[T]) Peek() (T, bool) {
-    if len(s.items) == 0 {
-        var zero T
-        return zero, false
-    }
-    return s.items[len(s.items)-1], true
+// At call site:
+var pe *ParseError
+if errors.As(err, &pe) {
+    fmt.Printf("parse failed at line %d\n", pe.Line)
 }
-
-func (s *Stack[T]) Len() int    { return len(s.items) }
-func (s *Stack[T]) IsEmpty() bool { return len(s.items) == 0 }
 ```
 
 **Expected output:**
 ```
-Pushed: 1, 2, 3
-Peek: 3 (len=3)
-Pop: 3, 2, 1
-IsEmpty: true
+line 3 col 7: empty token
+parse failed at line 3
 ```
 
-**Checkpoint:** `Pop` on an empty stack returns `(zero, false)` without panicking.
+**Checkpoint:** `errors.As` successfully extracts the `*ParseError` and its `Line` field is accessible.
 
 ---
 
-### Lab 3: Generic `Queue[T any]`
+### Lab 3: Error Wrapping with `%w`
 
-**What you'll practise:** a FIFO generic type implemented as a slice — understanding head-index vs re-slicing tradeoffs.
+**What you'll practise:** wrapping errors with `fmt.Errorf("%w", err)` and verifying `errors.Is` works through the chain.
 
 **Task:**
-Implement `Queue[T any]` with `Enqueue(v T)`, `Dequeue() (T, bool)`, `Front() (T, bool)`, `Len() int`, and `IsEmpty() bool`.
+Simulate a layered system: a low-level `readDB` error gets wrapped by `fetchRecord` and then by `handleRequest`. Show that `errors.Is` and `errors.Unwrap` work at every level.
 
 **Steps:**
-1. Declare `type Queue[T any] struct { items []T }`
-2. `Enqueue` appends to the back; `Dequeue` removes from the front using re-slicing
-3. Write a test: enqueue 5 items, dequeue 3, verify FIFO order and remaining `Len()`
-4. Confirm `Dequeue` on an empty queue returns `(zero, false)`
+1. Define a sentinel `ErrConnection = errors.New("connection refused")`
+2. Write `readDB() error` returning `ErrConnection`
+3. Write `fetchRecord(id int) error` wrapping with `fmt.Errorf("fetchRecord %d: %w", id, err)`
+4. Write `handleRequest(id int) error` wrapping again
+5. Call `handleRequest` and verify `errors.Is(err, ErrConnection)` is `true` at the top level
 
 ```go
-type Queue[T any] struct {
-    items []T
-}
+var ErrConnection = errors.New("connection refused")
 
-func (q *Queue[T]) Enqueue(v T) { q.items = append(q.items, v) }
+func readDB() error { return ErrConnection }
 
-func (q *Queue[T]) Dequeue() (T, bool) {
-    if len(q.items) == 0 {
-        var zero T
-        return zero, false
+func fetchRecord(id int) error {
+    if err := readDB(); err != nil {
+        return fmt.Errorf("fetchRecord %d: %w", id, err)
     }
-    front := q.items[0]
-    q.items = q.items[1:]
-    return front, true
+    return nil
 }
 
-func (q *Queue[T]) Front() (T, bool) {
-    if len(q.items) == 0 {
-        var zero T
-        return zero, false
+func handleRequest(id int) error {
+    if err := fetchRecord(id); err != nil {
+        return fmt.Errorf("handleRequest: %w", err)
     }
-    return q.items[0], true
+    return nil
 }
-
-func (q *Queue[T]) Len() int     { return len(q.items) }
-func (q *Queue[T]) IsEmpty() bool { return len(q.items) == 0 }
 ```
 
 **Expected output:**
 ```
-Enqueued: a, b, c, d, e
-Dequeue: a, b, c
-Remaining: 2  Front: d
+err: handleRequest: fetchRecord 42: connection refused
+errors.Is(ErrConnection): true
+Unwrap once: fetchRecord 42: connection refused
 ```
 
-**Checkpoint:** Dequeue returns items in FIFO order; `Len()` decrements correctly after each dequeue.
+**Checkpoint:** `errors.Is(err, ErrConnection)` is `true` even though the error has been wrapped twice.
 
 ---
 
-### Lab 4: `Filter` and `Map`
+### Lab 4: `errors.Join` — Collecting Multiple Errors
 
-**What you'll practise:** generic higher-order functions that work with any slice type.
+**What you'll practise:** accumulating multiple independent errors and combining them with `errors.Join` (Go 1.20+).
 
 **Task:**
-Write `Filter[T any](slice []T, pred func(T) bool) []T` and `Map[T, U any](slice []T, f func(T) U) []U`. Demonstrate each with at least two different type combinations.
+Write a `validateUser` function that checks name, email, and age independently. Collect all validation failures with `errors.Join` so callers see every problem at once.
 
 **Steps:**
-1. Implement `Filter` — return a new slice containing only elements for which `pred` returns true
-2. Implement `Map` — apply `f` to every element and return the result slice
-3. Use `Filter` to keep only even ints from `[]int{1,2,3,4,5,6}`
-4. Use `Map` to convert `[]string{"hello","world"}` to `[]int` of lengths
-5. Chain them: filter a string slice to words longer than 3 chars, then map to uppercase
+1. Write three validators: `validateName`, `validateEmail`, `validateAge` each returning an error or nil
+2. In `validateUser`, call all three, collect non-nil errors into a slice
+3. Use `errors.Join(errs...)` to return a combined error
+4. Print the combined error and verify `errors.Is` works for individual sentinels through the join
 
 ```go
-func Filter[T any](slice []T, pred func(T) bool) []T {
-    var out []T
-    for _, v := range slice {
-        if pred(v) {
-            out = append(out, v)
+var (
+    ErrBadName  = errors.New("name required")
+    ErrBadEmail = errors.New("invalid email")
+    ErrBadAge   = errors.New("age out of range")
+)
+
+func validateUser(name, email string, age int) error {
+    var errs []error
+    if name == "" {
+        errs = append(errs, ErrBadName)
+    }
+    if !strings.Contains(email, "@") {
+        errs = append(errs, ErrBadEmail)
+    }
+    if age < 0 || age > 150 {
+        errs = append(errs, ErrBadAge)
+    }
+    return errors.Join(errs...)
+}
+```
+
+**Expected output:**
+```
+name required
+invalid email
+age out of range
+errors.Is(ErrBadName): true
+```
+
+**Checkpoint:** `errors.Join` returns nil when all validators pass. `errors.Is` finds individual sentinels inside the joined error.
+
+---
+
+### Lab 5: Panic and Recover — `safeDiv`
+
+**What you'll practise:** converting a panic into a returned error using `recover` inside a deferred function.
+
+**Task:**
+Write `safeDiv(a, b int) (result int, err error)` that recovers from integer division-by-zero panics and returns an `ErrDivisionByZero` error instead.
+
+**Steps:**
+1. Define `var ErrDivisionByZero = errors.New("division by zero")`
+2. In `safeDiv`, use a named return and a deferred function that calls `recover()`
+3. If `recover()` returns a non-nil value, set `err = ErrDivisionByZero`
+4. Perform `a / b` in the function body; call `safeDiv(10, 0)` and `safeDiv(10, 2)` in main
+
+```go
+var ErrDivisionByZero = errors.New("division by zero")
+
+func safeDiv(a, b int) (result int, err error) {
+    defer func() {
+        if r := recover(); r != nil {
+            err = ErrDivisionByZero
+        }
+    }()
+    return a / b, nil
+}
+```
+
+**Expected output:**
+```
+10 / 2 = 5, err=<nil>
+10 / 0 = 0, err=division by zero
+```
+
+**Checkpoint:** `safeDiv(10, 0)` returns `0, ErrDivisionByZero` without crashing the program.
+
+---
+
+### Lab 6: Panic vs Error — When to Use Each
+
+**What you'll practise:** the Go convention that panics signal programming errors, while returned errors signal expected failure conditions.
+
+**Task:**
+Build two contrasting examples: one where `panic` is appropriate (programmer error during init) and one where returning an error is correct (runtime failure). Add comments explaining the rule.
+
+**Steps:**
+1. Write `mustPositive(n int) int` that panics with a helpful message if `n <= 0` — this is a programmer-error guard for invariants
+2. Write `openConfig(path string) (*Config, error)` that returns an error when the file is missing — this is a recoverable runtime condition
+3. In `main`, use `mustPositive` with a valid value; show what happens with an invalid one using `safeDiv`-style recover in a test
+4. Add a comment block explaining: panic in `init`/setup for invariants; return errors for expected failures
+
+```go
+// mustPositive is called during program setup.
+// It panics because a non-positive value here is a programming bug,
+// not a runtime condition the caller should handle.
+func mustPositive(n int) int {
+    if n <= 0 {
+        panic(fmt.Sprintf("mustPositive: got %d, want > 0", n))
+    }
+    return n
+}
+
+// openConfig returns an error because a missing file is a
+// recoverable condition — the caller can log it, use defaults, or retry.
+func openConfig(path string) ([]byte, error) {
+    return os.ReadFile(path)
+}
+```
+
+**Expected output:**
+```
+Port: 8080
+openConfig: open missing.toml: no such file or directory
+```
+
+**Checkpoint:** You can articulate in a comment: use `panic` only for invariant violations detected at startup; use returned errors for all runtime failures callers might handle.
+
+---
+
+### Final Lab (Project): CSV Row Parser
+
+**What you'll practise:** combining sentinel errors, custom error types, error wrapping, and `errors.Join` into a realistic parsing component.
+
+**Task:**
+Parse rows from a CSV string. Define `ErrEmptyField` and `ParseError`, write a `parseRow` function that validates field count and content, and demonstrate `errors.Is` / `errors.As` at the call site.
+
+**Steps:**
+1. Define `var ErrEmptyField = errors.New("empty required field")`
+2. Define `ParseError{Line, Col int, Msg string}` implementing `error`
+3. Write `parseRow(line string, lineNum int) ([]string, error)` that wraps `ErrEmptyField` in a `ParseError` when a field is blank
+4. Parse several rows — some valid, some invalid — and inspect errors with `errors.Is` and `errors.As`
+
+```go
+func parseRow(line string, lineNum int) ([]string, error) {
+    fields := strings.Split(line, ",")
+    if len(fields) != 3 {
+        return nil, &ParseError{Line: lineNum, Col: 0,
+            Msg: fmt.Sprintf("expected 3 fields, got %d", len(fields))}
+    }
+    for i, f := range fields {
+        if strings.TrimSpace(f) == "" {
+            return nil, &ParseError{
+                Line: lineNum, Col: i + 1,
+                Msg:  fmt.Sprintf("%w", ErrEmptyField),
+            }
         }
     }
-    return out
-}
-
-func Map[T, U any](slice []T, f func(T) U) []U {
-    out := make([]U, len(slice))
-    for i, v := range slice {
-        out[i] = f(v)
-    }
-    return out
+    return fields, nil
 }
 ```
 
 **Expected output:**
 ```
-Even ints: [2 4 6]
-Word lengths: [5 5]
-Long+Upper: [HELLO WORLD]
+row 1: [alice 30 engineer]
+row 2: parse error line 2 col 2: empty required field
+  -> errors.Is(ErrEmptyField): true
+  -> line: 2
 ```
 
-**Checkpoint:** Neither function allocates an output slice when the input is empty.
+**Checkpoint:** `errors.Is(err, ErrEmptyField)` is true for blank-field rows; `errors.As` extracts the line number; valid rows parse cleanly.
 
----
-
-### Lab 5: `Reduce`
-
-**What you'll practise:** a generic accumulator that transforms a slice into a single value using an initial value and a combining function.
-
-**Task:**
-Write `Reduce[T, U any](slice []T, initial U, f func(U, T) U) U`. Use it to sum a `[]int`, find the maximum, and concatenate a `[]string`.
-
-**Steps:**
-1. Implement `Reduce` iterating over `slice`, updating an accumulator with `f(acc, v)`
-2. Use it with `func(acc, v int) int { return acc + v }` to sum `[]int{1,2,3,4,5}`
-3. Use it to find the max of `[]int{3,1,4,1,5,9,2,6}`
-4. Use it to concatenate `[]string{"Go","is","fun"}` into `"Go is fun"`
-
-```go
-func Reduce[T, U any](slice []T, initial U, f func(U, T) U) U {
-    acc := initial
-    for _, v := range slice {
-        acc = f(acc, v)
-    }
-    return acc
-}
-
-// Sum
-sum := Reduce([]int{1, 2, 3, 4, 5}, 0, func(acc, v int) int { return acc + v })
-
-// Join strings
-joined := Reduce([]string{"Go", "is", "fun"}, "", func(acc, v string) string {
-    if acc == "" { return v }
-    return acc + " " + v
-})
-```
-
-**Expected output:**
-```
-Sum: 15
-Max: 9
-Joined: Go is fun
-```
-
-**Checkpoint:** `Reduce` on an empty slice returns `initial` unchanged.
-
----
-
-### Lab 6: Type Constraint — `Number` and `Sum`
-
-**What you'll practise:** defining a custom type constraint with the `~` underlying-type prefix and writing a numeric generic function.
-
-**Task:**
-Define a `Number` constraint covering all integer and float types using `~` prefixes. Write `Sum[T Number](slice []T) T` and verify it works with `int`, `float64`, and a custom `type Celsius float64`.
-
-**Steps:**
-1. Define `type Number interface { ~int | ~int32 | ~int64 | ~float32 | ~float64 }`
-2. Implement `Sum[T Number](slice []T) T` using a zero value and accumulation
-3. Test with `[]int{1,2,3}`, `[]float64{1.1, 2.2}`, and `[]Celsius{98.6, 37.0}`
-4. Try removing the `~` and observe the compile error with `Celsius` — then restore it
-
-```go
-type Number interface {
-    ~int | ~int32 | ~int64 | ~float32 | ~float64
-}
-
-func Sum[T Number](slice []T) T {
-    var total T
-    for _, v := range slice {
-        total += v
-    }
-    return total
-}
-
-type Celsius float64
-
-// These all compile because of the ~ prefix:
-fmt.Println(Sum([]int{1, 2, 3}))           // 6
-fmt.Println(Sum([]float64{1.1, 2.2, 3.3})) // 6.6
-fmt.Println(Sum([]Celsius{98.6, 37.0}))    // 135.6
-```
-
-**Expected output:**
-```
-int sum: 6
-float64 sum: 6.6
-Celsius sum: 135.6
-```
-
-**Checkpoint:** `Sum` works with a named type whose underlying type is in the constraint. Removing `~` causes a compile error for `Celsius`.
-
----
-
-### Final Lab (Project): Generic Stack, Queue, Filter, Map, Reduce
-
-**What you'll practise:** assembling all generic building blocks into a complete, tested data-structures package.
-
-**Task:**
-Implement and test the full generic toolkit: `Stack[T]`, `Queue[T]`, `Filter`, `Map`, `Reduce`, and the `Number`/`Sum` utilities. Wire them together in a `main` that demonstrates a realistic pipeline.
-
-**Steps:**
-1. Implement `Stack[T any]` — LIFO with `Push`, `Pop`, `Peek`, `Len`, `IsEmpty`
-2. Implement `Queue[T any]` — FIFO with `Enqueue`, `Dequeue`, `Front`, `Len`, `IsEmpty`
-3. Implement generic `Filter[T any]`, `Map[T, U any]`, `Reduce[T, U any]`
-4. Write tests for each using at least two different type instantiations
-5. In `main`, demonstrate a pipeline: load words into a `Queue`, filter long ones, map to uppercase, reduce to a single string
-
-```go
-words := []string{"go", "generics", "are", "powerful", "and", "elegant"}
-long  := Filter(words, func(w string) bool { return len(w) > 3 })
-upper := Map(long, strings.ToUpper)
-result := Reduce(upper, "", func(acc, w string) string {
-    if acc == "" { return w }
-    return acc + " " + w
-})
-fmt.Println(result)
-```
-
-**Expected output:**
-```
-GENERICS ARE POWERFUL ELEGANT
-```
-
-**Checkpoint:** `go test ./...` passes; every generic function is exercised with at least two type parameters in tests.
-
-**Extension ideas:** implement a `Set[T comparable]` with `Add`, `Contains`, `Remove`, `Union`, `Intersection`.
+**Extension ideas:** stack multiple errors with [`errors.Join`](https://pkg.go.dev/errors#Join) (Go 1.20+); write a retry wrapper that retries on transient errors.
 
 ## Official Documentation
 
-- [`strings`](https://pkg.go.dev/strings) — `ToUpper` and other functions used in generic examples
-- [Language Spec: Type parameters](https://go.dev/ref/spec#Type_parameter_declarations) — type parameter syntax
-- [Language Spec: Type constraints](https://go.dev/ref/spec#Interface_types) — constraint interfaces
-- [Go Blog: An Introduction to Generics](https://go.dev/blog/intro-generics) — overview of Go generics
-- [Go Blog: When to use generics](https://go.dev/blog/when-generics) — guidance on generics vs interfaces
-- [Go Tour: Generics](https://go.dev/tour/generics/1) — interactive generics tour
+- [`errors`](https://pkg.go.dev/errors) — New, Is, As, Unwrap, Join
+- [`fmt`](https://pkg.go.dev/fmt) — Errorf with `%w` wrapping verb
+- [Language Spec: Errors](https://go.dev/ref/spec#Errors) — the built-in error interface
+- [Effective Go: Errors](https://go.dev/doc/effective_go#errors) — error handling patterns
+- [Go Blog: Error handling and Go](https://go.dev/blog/error-handling-and-go) — idiomatic error handling
+- [Go Blog: Working with errors in Go 1.13](https://go.dev/blog/go1.13-errors) — wrapping, Is, As

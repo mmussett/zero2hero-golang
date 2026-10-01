@@ -1,10 +1,10 @@
-# Zero to Hero: Go — 34-Day Curriculum
+# Zero to Hero: Go — 35-Day Curriculum
 
 A project-based path from absolute beginner to production-minded Go developer, pairing core concepts with hands-on projects built from scratch.
 
 ---
 
-## Week 1: Foundations (Days 1–7, 32)
+## Week 1: Foundations (Days 1–7)
 
 | Day | Topic | Project |
 |-----|-------|---------|
@@ -15,9 +15,8 @@ A project-based path from absolute beginner to production-minded Go developer, p
 | [05](day-05/README.md) | Arrays, slices, strings, `strings` package | String Statistics Tool |
 | [06](day-06/README.md) | Maps, method sets, comma-ok idiom, embedded structs | Word Frequency Counter |
 | [07](day-07/README.md) | Packages, exported identifiers, `go.mod` and dependencies | Multi-package library |
-| [32](day-32/README.md) | Idiomatic project structure: flat, `cmd/`, `internal/`, domain-driven layout | Restructure the notes API |
 
-**Milestone:** You understand Go's core model — value semantics, explicit pointers, and why the language is deliberately small. You can also structure a Go project idiomatically from day one.
+**Milestone:** You understand Go's core model — value semantics, explicit pointers, and why the language is deliberately small.
 
 ---
 
@@ -25,15 +24,15 @@ A project-based path from absolute beginner to production-minded Go developer, p
 
 | Day | Topic | Project |
 |-----|-------|---------|
-| [08](day-08/README.md) | Interfaces, duck typing, type assertions, type switches | Shape library |
-| [09](day-09/README.md) | Error handling: `fmt.Errorf`, `%w`, `errors.Is`, `errors.As`, custom types | CSV row parser |
-| [10](day-10/README.md) | Generics: type parameters, `comparable`, custom constraints | Generic Stack and Queue |
-| [11](day-11/README.md) | `sort`, `container/heap`, `container/list`, adjacency-map graphs | Data structures library |
-| [12](day-12/README.md) | Closures, function types, higher-order functions, functional options | Data pipeline |
-| [13](day-13/README.md) | `go test`, table-driven tests, subtests, `testing.B`, `testify` | Full test suite |
-| [14](day-14/README.md) | `io.Reader`/`io.Writer`, `fmt.Stringer`, `sort.Interface`, embedding | Interface showcase |
+| [08](day-08/README.md) | Idiomatic project structure: flat, `cmd/`, `internal/`, domain-driven layout | Restructure the notes API |
+| [09](day-09/README.md) | Interfaces, duck typing, type assertions, type switches | Shape library |
+| [10](day-10/README.md) | Error handling: `fmt.Errorf`, `%w`, `errors.Is`, `errors.As`, custom types | CSV row parser |
+| [11](day-11/README.md) | Generics: type parameters, `comparable`, custom constraints | Generic Stack and Queue |
+| [12](day-12/README.md) | `sort`, `container/heap`, `container/list`, adjacency-map graphs | Data structures library |
+| [13](day-13/README.md) | Closures, function types, higher-order functions, functional options | Data pipeline |
+| [14](day-14/README.md) | `go test`, table-driven tests, subtests, `testing.B`, `testify` | Full test suite |
 
-**Milestone:** You can model any domain idiomatically and handle errors without panicking.
+**Milestone:** You can structure a Go project idiomatically and model any domain with interfaces, errors, and generics.
 
 ---
 
@@ -41,46 +40,45 @@ A project-based path from absolute beginner to production-minded Go developer, p
 
 | Day | Topic | Project |
 |-----|-------|---------|
-| [15](day-15/README.md) | Goroutines, channels, `select`, fan-out / fan-in, `range` over channels | Parallel file hasher |
-| [16](day-16/README.md) | `sync.Mutex`, `sync.RWMutex`, `sync.WaitGroup`, `sync.Once`, `sync/atomic` | Thread-safe LRU cache |
-| [17](day-17/README.md) | `context` — cancel, timeout, deadline, values; TCP echo server | Cancellable HTTP downloader |
-| [18](day-18/README.md) | `os`, `bufio`, `io` — file I/O, walking directories, `io.Copy` | Config file reader |
-| [19](day-19/README.md) | `encoding/json`, struct tags, streaming encode/decode, `encoding/csv` | Config manager |
-| [20](day-20/README.md) | `flag` package, `cobra` subcommands, stdin/stdout, exit codes | `todo` CLI tool |
-| [21](day-21/README.md) | `net/http` — handler, middleware, `http.Client`, JSON API | HTTP echo server + client |
+| [15](day-15/README.md) | `io.Reader`/`io.Writer`, `fmt.Stringer`, `sort.Interface`, embedding | Interface showcase |
+| [16](day-16/README.md) | Goroutines, channels, `select`, fan-out / fan-in, `range` over channels | Parallel file hasher |
+| [17](day-17/README.md) | `sync.Mutex`, `sync.RWMutex`, `sync.WaitGroup`, `sync.Once`, `sync/atomic` | Thread-safe LRU cache |
+| [18](day-18/README.md) | `context` — cancel, timeout, deadline, values; TCP echo server | Cancellable HTTP downloader |
+| [19](day-19/README.md) | `os`, `bufio`, `io` — file I/O, walking directories, `io.Copy` | Config file reader |
+| [20](day-20/README.md) | `encoding/json`, struct tags, streaming encode/decode, `encoding/csv` | Config manager |
+| [21](day-21/README.md) | `flag` package, `cobra` subcommands, stdin/stdout, exit codes | `todo` CLI tool |
 
-**Milestone:** You can write concurrent programs, build CLI tools, and serve HTTP.
-
----
-
-## Week 4: Production (Days 22–30)
-
-| Day | Topic | Project |
-|-----|-------|---------|
-| [22](day-22/README.md) | REST API with `chi`, JSON middleware, in-memory store | Notes REST API |
-| [23](day-23/README.md) | `database/sql` + SQLite driver, prepared statements, transactions | Persist notes to database |
-| [24](day-24/README.md) | Error hierarchy: sentinels, typed errors, HTTP error responses | Clean error layer for notes API |
-| [25](day-25/README.md) | `log/slog` — structured logging, handlers, trace IDs via context | Structured logs across the notes app |
-| [26](day-26/README.md) | `go test -bench`, `b.N`, `-benchmem`, `go tool pprof` | Profile word-frequency counter |
-| [27](day-27/README.md) | `//go:embed`, `text/template`, `html/template`, build tags, `go:generate` | Embedded assets server with templates |
-| [28](day-28/README.md) | `reflect` — `TypeOf`, `ValueOf`, struct tags, `reflect.Kind` | Custom `Describe` utility |
-| [29](day-29/README.md) | Versioning, `pkg.go.dev`, Docker multi-stage build, `goreleaser` | Package and ship the shape library |
-| [30](day-30/README.md) | Capstone | End-to-end CLI + REST API + database app |
-
-**Milestone:** You can design, build, instrument, and deploy a production Go service.
+**Milestone:** You can write concurrent programs, handle I/O idiomatically, and build CLI tools.
 
 ---
 
-## Advanced Golang Concepts (Days 31, 33–35)
+## Week 4: Production (Days 22–28)
 
 | Day | Topic | Project |
 |-----|-------|---------|
-| [31](day-31/README.md) | Interfaces: composition, nil trap, stdlib catalogue, accept-interfaces/return-structs, mocking, anti-patterns | Pluggable notification system |
+| [22](day-22/README.md) | `net/http` — handler, middleware, `http.Client`, JSON API | HTTP echo server + client |
+| [23](day-23/README.md) | REST API with `chi`, JSON middleware, in-memory store | Notes REST API |
+| [24](day-24/README.md) | `database/sql` + SQLite driver, prepared statements, transactions | Persist notes to database |
+| [25](day-25/README.md) | Error hierarchy: sentinels, typed errors, HTTP error responses | Clean error layer for notes API |
+| [26](day-26/README.md) | `log/slog` — structured logging, handlers, trace IDs via context | Structured logs across the notes app |
+| [27](day-27/README.md) | `go test -bench`, `b.N`, `-benchmem`, `go tool pprof` | Profile word-frequency counter |
+| [28](day-28/README.md) | `//go:embed`, `text/template`, `html/template`, build tags, `go:generate` | Embedded assets server with templates |
+
+**Milestone:** You can serve HTTP, back it with a database, instrument it with structured logs, and benchmark it.
+
+---
+
+## Advanced Golang Concepts (Days 29–35)
+
+| Day | Topic | Project |
+|-----|-------|---------|
+| [29](day-29/README.md) | `reflect` — `TypeOf`, `ValueOf`, struct tags, `reflect.Kind` | Custom `Describe` utility |
+| [30](day-30/README.md) | Versioning, `pkg.go.dev`, Docker multi-stage build, `goreleaser` | Package and ship the shape library |
+| [31](day-31/README.md) | Capstone | End-to-end CLI + REST API + database app |
+| [32](day-32/README.md) | Interfaces: composition, nil trap, stdlib catalogue, accept-interfaces/return-structs, mocking, anti-patterns | Pluggable notification system |
 | [33](day-33/README.md) | Channel model: pipelines, fan-out/in, done channels, `select`, direction types, common mistakes | Channel-based text pipeline + word counter |
 | [34](day-34/README.md) | Goroutines & sync: `Mutex`, `RWMutex`, `WaitGroup`, `Once`, `atomic`, `sync.Map`, `errgroup`, deadlocks | Concurrent download manager |
 | [35](day-35/README.md) | Context deep dive: tree propagation, values, middleware, DB ops, leak detection, testing patterns | Request-scoped pipeline |
-
-> Day 32 (Idiomatic Project Structure) appears in **Week 1** — learning to structure Go projects well is a foundational skill, not an advanced one.
 
 ---
 

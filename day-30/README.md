@@ -1,401 +1,363 @@
-# Day 30: Capstone
+# Day 30: Publishing and Deployment
 
-## You Made It
+## Publishing a Go Module
 
-Thirty days of deliberate practice. You have built:
+Any publicly accessible Git repository is a Go module. Publish by tagging:
 
-- A concurrent file hasher, a thread-safe LRU cache, a cancellable HTTP downloader
-- A full CRUD REST API with middleware, structured logging, and a SQLite backing store
-- A CLI tool with subcommands
-- Benchmarks, profiles, and an embedded-assets server
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+# Available at: pkg.go.dev/github.com/mmussett/zero2hero-golang/day-08
+```
 
-Now build something that is entirely yours.
+**Semantic versioning rules:**
+- `v0.x.y` — unstable; breaking changes are fine
+- `v1.x.y` — stable public API; breaking changes require bumping to `v2`
+- `v2+` — module path and all import paths must include the `/v2` suffix
 
-## Skills You Have
+```go
+module github.com/mmussett/zero2hero-golang/shapes/v2
+```
 
-| Week | What You Can Do Now |
-|------|---------------------|
-| 1 | Model any domain with structs, slices, maps, and packages |
-| 2 | Write idiomatic interfaces, handle errors cleanly, use generics |
-| 3 | Write concurrent programs, build CLI tools, serve HTTP |
-| 4 | Build, instrument, profile, containerise, and publish a Go service |
+## `go install` for CLI Tools
 
-## Capstone Options
+```bash
+go install github.com/mmussett/zero2hero-golang/day-20@latest
+# Installs the todo binary to $GOPATH/bin (or $GOBIN)
+```
 
-**Small (2–3 days)** — CLI tools
-- A `grep` replacement: recursive regex search with coloured, numbered output
-- A password generator/manager storing entries encrypted with `crypto/aes`
-- A Markdown renderer that outputs ANSI-formatted text to the terminal
+## Docker Multi-Stage Build
 
-**Medium (1–2 weeks)** — Web services
-- A URL shortener: `POST /shorten` returns a short code, `GET /{code}` redirects; backed by SQLite
-- A personal finance tracker: CSV import, category tagging, monthly summaries as a REST API
-- A WebSocket chat server with named rooms using `golang.org/x/net/websocket`
+```dockerfile
+# Build stage — full Go toolchain
+FROM golang:1.23-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /notes-api .
 
-**Large (2–4 weeks)** — Substantial projects
-- A static site generator: Markdown → HTML with templates, partials, and `--serve` live-reload
-- A bitcask-inspired key-value database: WAL, compaction, HTTP API
-- A concurrent web crawler: configurable depth, robots.txt respect, deduplicated output
+# Runtime stage — minimal scratch image
+FROM scratch
+COPY --from=builder /notes-api /notes-api
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+EXPOSE 8080
+ENTRYPOINT ["/notes-api"]
+```
 
-## Planning Checklist
+`CGO_ENABLED=0` produces a fully static binary. `-ldflags="-s -w"` strips debug info, reducing binary size by ~30%.
 
-Before writing code:
+## Embedding Version Information
 
-- [ ] Define your core types (`Note`, `Account`, `Page`, …)
-- [ ] Choose dependencies deliberately — prefer the standard library
-- [ ] Design your error types with custom sentinels
-- [ ] Write at least one test before any handler
-- [ ] Initialise `slog` on day one
-- [ ] Write a `Dockerfile` before shipping
+```bash
+go build -ldflags="-X main.version=$(git describe --tags) \
+                   -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+```
+
+```go
+var (
+    version   = "dev"
+    buildTime = "unknown"
+)
+
+func main() {
+    fmt.Printf("notes-api %s (built %s)\n", version, buildTime)
+}
+```
+
+## goreleaser
+
+`goreleaser` builds and publishes cross-platform releases automatically:
+
+```yaml
+# .goreleaser.yaml
+builds:
+  - env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags: ["-s -w -X main.version={{.Version}}"]
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: 'checksums.txt'
+```
+
+```bash
+goreleaser release --snapshot --clean   # local dry run
+goreleaser release                      # real release (requires GITHUB_TOKEN)
+```
 
 ## Labs
 
-### Lab 1: Project Planning — Pick Your Capstone
+### Lab 1: Version Embedding — ldflags and --version
 
-**What you'll practise:** Thinking through scope, data model, and interface before writing a single line of code.
-
-**Task:**
-Review the six capstone options above. Pick one, then sketch its data model and API or command surface on paper (or in a text file) before opening your editor.
-
-**Steps:**
-1. Re-read the Capstone Options section
-2. Choose a project (Small, Medium, or Large) that fits your available time
-3. Write down your core types — e.g. `type Bookmark struct { ID int; URL string; Tags []string }`
-4. List every API endpoint or CLI subcommand your project will expose
-5. Identify the one external dependency you expect to need (if any)
-
-```
-# Example sketch for a URL bookmark manager
-Types:   Bookmark{ID, URL, Title, Tags, CreatedAt}
-Storage: JSON file (~day-19 pattern) or SQLite (~day-23 pattern)
-CLI:     add <url> [--tag t]   list [--tag t]   delete <id>   export
-HTTP:    POST /bookmarks        GET /bookmarks   DELETE /bookmarks/{id}
-```
-
-**Expected output:**
-A clear, written sketch you can refer to throughout the following labs. No code yet.
-
-**Checkpoint:** You can describe your project's core type, its storage mechanism, and its interface in three sentences without looking at notes.
-
----
-
-### Lab 2: Module Setup — Scaffolding Your Project
-
-**What you'll practise:** Initialising a Go module, creating the directory structure, and writing stub files that compile cleanly.
+**What you'll practise:** Embedding a version string and build time into a binary at compile time using `-ldflags -X`.
 
 **Task:**
-Create the module and directory layout for your chosen capstone. Every file should compile (stubs are fine), and `go build ./...` should succeed.
+Add `version` and `buildTime` package-level variables to `main.go`. Write a `--version` flag that prints them, then write a `Makefile` target that injects real values at build time.
 
 **Steps:**
-1. `mkdir capstone/myproject && cd capstone/myproject`
-2. `go mod init github.com/yourname/myproject`
-3. Create stub files for each package: `main.go`, `store/store.go`, `model/model.go`
-4. Add your module to `go.work`: `go work use ./capstone/myproject`
-5. Run `go build ./...` and confirm no errors
-
-```
-myproject/
-├── go.mod
-├── main.go          ← package main, imports store and model
-├── model/
-│   └── model.go     ← core types
-└── store/
-    └── store.go     ← storage interface + implementation stub
-```
+1. Declare `var version = "dev"` and `var buildTime = "unknown"` in `main.go`
+2. Parse `--version` with the `flag` package; if set, print and exit
+3. Write a `Makefile` with a `build` target using `-ldflags`
 
 ```go
-// store/store.go
-package store
+// main.go
+var (
+    version   = "dev"
+    buildTime = "unknown"
+)
 
-import "github.com/yourname/myproject/model"
-
-type Store interface {
-    Add(item model.Bookmark) (model.Bookmark, error)
-    List() ([]model.Bookmark, error)
-    Delete(id int) error
-}
-```
-
-**Expected output:**
-```
-$ go build ./...
-(no output — success)
-```
-
-**Checkpoint:** `go build ./...` exits 0. The module appears in `go.work`. Directory structure matches your sketch from Lab 1.
-
----
-
-### Lab 3: Core Data Layer — Storage with Unit Tests
-
-**What you'll practise:** Implementing the storage layer (JSON file, SQLite, or in-memory) and verifying it with unit tests before wiring any interface.
-
-**Task:**
-Implement the `Store` interface from Lab 2 with a concrete type (e.g. `JSONStore` or `MemStore`). Write at least three unit tests: add-then-list, delete-then-confirm-missing, and list-empty.
-
-**Steps:**
-1. Implement `Add`, `List`, and `Delete` on your concrete store type
-2. Write `store/store_test.go` with `TestAdd`, `TestDelete`, `TestListEmpty`
-3. Run `go test ./store/...` — all tests must pass
-4. Use table-driven tests for `Delete` (existing ID, non-existing ID)
-
-```go
-// store/store_test.go
-func TestAdd(t *testing.T) {
-    s := NewMemStore()
-    got, err := s.Add(model.Bookmark{URL: "https://go.dev"})
-    if err != nil { t.Fatal(err) }
-    if got.ID == 0 { t.Error("expected non-zero ID") }
-}
-
-func TestDeleteMissing(t *testing.T) {
-    s := NewMemStore()
-    err := s.Delete(999)
-    if !errors.Is(err, ErrNotFound) {
-        t.Errorf("want ErrNotFound, got %v", err)
-    }
-}
-```
-
-**Expected output:**
-```
-$ go test -v ./store/...
---- PASS: TestAdd (0.00s)
---- PASS: TestDeleteMissing (0.00s)
---- PASS: TestListEmpty (0.00s)
-PASS
-```
-
-**Checkpoint:** All tests pass. The storage layer has no dependency on HTTP or CLI code.
-
----
-
-### Lab 4: Business Logic — TDD Core Operations
-
-**What you'll practise:** Writing tests before implementation (TDD) for the core business rules of your capstone.
-
-**Task:**
-Identify two or three business rules in your project (e.g. "duplicate URLs are rejected", "tags are normalised to lowercase", "pagination returns at most 20 items"). Write the test first, watch it fail, then implement.
-
-**Steps:**
-1. Pick two business rules specific to your chosen capstone
-2. Write a failing test for each rule in `model/` or `store/`
-3. Implement just enough code to make each test pass
-4. Refactor if needed, keeping tests green
-
-```go
-// Example: duplicate URL rejection
-func TestAddDuplicateURL(t *testing.T) {
-    s := NewMemStore()
-    _, err := s.Add(model.Bookmark{URL: "https://go.dev"})
-    if err != nil { t.Fatal(err) }
-
-    _, err = s.Add(model.Bookmark{URL: "https://go.dev"})
-    if !errors.Is(err, ErrDuplicate) {
-        t.Errorf("expected ErrDuplicate, got %v", err)
-    }
-}
-```
-
-**Expected output:**
-```
-$ go test ./...
---- FAIL: TestAddDuplicateURL (0.00s)    ← before implementation
-    store_test.go:22: expected ErrDuplicate, got <nil>
-```
-Then after implementing:
-```
---- PASS: TestAddDuplicateURL (0.00s)
-```
-
-**Checkpoint:** You wrote the test before the implementation and watched it go from red to green. All existing tests still pass.
-
----
-
-### Lab 5: Interface Layer — CLI Commands or HTTP Routes
-
-**What you'll practise:** Wiring the storage layer to a CLI (`cobra` or `flag`) or HTTP routes (`net/http` or `chi`), keeping handlers thin.
-
-**Task:**
-Implement the interface layer for your capstone. Handlers and commands should contain no business logic — they parse input, call the store, and format output.
-
-**Steps:**
-1. For CLI: add subcommands (e.g. `add`, `list`, `delete`) using `flag` subcommands or `cobra`
-2. For HTTP: register routes, parse JSON request bodies, return JSON responses with correct status codes
-3. Keep each handler/command under 20 lines — push logic to the store
-4. Run `go run . add https://go.dev --tag golang` (CLI) or `curl -X POST /bookmarks` (HTTP) to smoke-test
-
-```go
-// Thin HTTP handler example
-func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request) {
-    var b model.Bookmark
-    if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
+func main() {
+    showVersion := flag.Bool("version", false, "print version and exit")
+    flag.Parse()
+    if *showVersion {
+        fmt.Printf("myapp %s (built %s)\n", version, buildTime)
         return
     }
-    created, err := h.store.Add(b)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusConflict)
-        return
-    }
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(created)
+    fmt.Println("Hello from myapp!")
 }
+```
+
+```makefile
+# Makefile
+VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo "v0.0.0")
+BUILDTIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+build:
+	go build -ldflags="-X main.version=$(VERSION) -X main.buildTime=$(BUILDTIME)" -o myapp .
 ```
 
 **Expected output:**
 ```
-$ go run . add https://go.dev --tag golang
-Added bookmark #1: https://go.dev [golang]
-
-$ go run . list
-#1  https://go.dev  [golang]
+$ make build && ./myapp --version
+myapp v0.1.0-3-gabcdef (built 2024-01-15T10:00:00Z)
 ```
 
-**Checkpoint:** At least two commands or routes work end-to-end. No business logic lives in the handler or command functions.
+**Checkpoint:** Running `./myapp --version` after `make build` prints a non-"dev" version. Building with plain `go build` (no Makefile) still falls back to `version=dev`.
 
 ---
 
-### Lab 6: Error Handling and Logging — Production Hygiene
+### Lab 2: Multi-Stage Dockerfile — Measuring Image Size
 
-**What you'll practise:** Applying Day 24 sentinel error patterns and Day 25 structured logging throughout the project.
+**What you'll practise:** Writing a multi-stage Dockerfile with a `golang:1.23-alpine` builder stage and a minimal `scratch` or `alpine` runtime stage, then comparing image sizes.
 
 **Task:**
-Add custom sentinel errors, wrap errors with context at every layer boundary, and add `slog` logging so every important operation emits a structured log entry.
+Write a `Dockerfile` for the Day 22 notes API. Build it twice — once with `FROM alpine` as the runtime and once with `FROM scratch` — and compare the resulting image sizes with `docker images`.
 
 **Steps:**
-1. Define sentinel errors in `store/`: `var ErrNotFound = errors.New("not found")`, `var ErrDuplicate = errors.New("duplicate")`
-2. Wrap errors at the store boundary: `fmt.Errorf("store.Add: %w", ErrDuplicate)`
-3. Initialise a JSON `slog.Logger` in `main` with the service name as a permanent field
-4. Log every add, delete, and list operation at `Info`; log errors at `Error` with the `"err"` attribute
-5. Make log level configurable via `LOG_LEVEL` env var
+1. Stage 1: `FROM golang:1.23-alpine AS builder` — compile with `CGO_ENABLED=0`
+2. Stage 2a: `FROM alpine` — copy the binary, expose port, set entrypoint
+3. Build and record the size: `docker build -t notes-alpine .`
+4. Stage 2b: Change to `FROM scratch`, rebuild as `notes-scratch`
+5. Run `docker images notes-alpine notes-scratch` and compare
 
-```go
-// In main
-logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-    Level: logLevelFromEnv(),
-})).With("service", "bookmarks")
-slog.SetDefault(logger)
+```dockerfile
+FROM golang:1.23-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /notes-api .
 
-// In handler
-if errors.Is(err, store.ErrNotFound) {
-    slog.Error("bookmark not found", "id", id)
-    http.Error(w, "not found", http.StatusNotFound)
-    return
-}
+FROM scratch
+COPY --from=builder /notes-api /notes-api
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+EXPOSE 8080
+ENTRYPOINT ["/notes-api"]
 ```
 
 **Expected output:**
 ```
-{"time":"...","level":"INFO","msg":"bookmark added","service":"bookmarks","id":1,"url":"https://go.dev"}
-{"time":"...","level":"ERROR","msg":"bookmark not found","service":"bookmarks","id":999}
+REPOSITORY     TAG     SIZE
+notes-alpine   latest  18.2MB
+notes-scratch  latest   8.4MB
 ```
 
-**Checkpoint:** Every error path logs at `Error` level with an `"err"` attribute. Happy paths log at `Info`. `errors.Is` correctly identifies sentinel errors across layer boundaries.
+**Checkpoint:** Both images start the API successfully (`docker run -p 8080:8080 notes-scratch`). The scratch image is noticeably smaller. You can explain why `-ldflags="-s -w"` reduces binary size.
 
 ---
 
-### Lab 7: Polish and Ship — Dockerfile, Graceful Shutdown, --version
+### Lab 3: Cross-Compilation — Building for Multiple Platforms
 
-**What you'll practise:** Making your capstone production-ready with a multi-stage Dockerfile, graceful HTTP shutdown, and embedded version info.
-
-**Task:**
-Add the final production touches: a multi-stage Dockerfile, graceful shutdown on `SIGTERM`/`SIGINT`, and a `--version` flag with embedded build info.
-
-**Steps:**
-1. Add `var version = "dev"` and a `--version` flag (see Day 29 Lab 1)
-2. Implement graceful shutdown using `http.Server.Shutdown` with a context timeout
-3. Write a multi-stage `Dockerfile` (alpine builder, scratch or alpine runtime)
-4. Write a `README.md` with installation, usage examples, and environment variables
-
-```go
-// Graceful shutdown
-srv := &http.Server{Addr: addr, Handler: mux}
-go func() {
-    if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-        slog.Error("server error", "err", err)
-        os.Exit(1)
-    }
-}()
-
-quit := make(chan os.Signal, 1)
-signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-<-quit
-
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-defer cancel()
-if err := srv.Shutdown(ctx); err != nil {
-    slog.Error("shutdown error", "err", err)
-}
-slog.Info("server stopped gracefully")
-```
-
-**Expected output:**
-```
-$ ./myapp --version
-bookmarks v1.0.0 (built 2024-01-15T10:00:00Z)
-
-$ docker build -t bookmarks . && docker run -p 8080:8080 bookmarks
-{"time":"...","level":"INFO","msg":"server started","addr":":8080","version":"v1.0.0"}
-```
-
-**Checkpoint:** `docker run` starts the server. `curl /health` returns version info. Sending `Ctrl-C` triggers a clean shutdown log line within 10 seconds.
-
----
-
-### Final Lab (Project): Your Capstone — URL Bookmark Manager (Example)
-
-**What you'll practise:** Synthesising all 30 days into a complete, tested, containerised Go application.
+**What you'll practise:** Using `GOOS` and `GOARCH` environment variables to cross-compile a Go binary for different operating systems and architectures from a single host.
 
 **Task:**
-Complete your chosen capstone project, using the URL bookmark manager as the reference example. The finished project must have: working storage, a tested business layer, an HTTP or CLI interface, structured logging, and a Dockerfile.
+Write a shell script (or Makefile targets) that compiles the `myapp` binary from Lab 1 for `linux/amd64`, `darwin/arm64`, and `windows/amd64`. Verify the output files are different formats.
 
 **Steps:**
-1. Review your Lab 1 sketch — does the implementation match?
-2. Ensure `go test ./...` passes with no failures
-3. Write at least one integration test that exercises the full stack (handler → store)
-4. Run `docker build` and smoke-test every endpoint or command from the `README.md`
-5. Tag `v1.0.0` locally: `git tag v1.0.0`
+1. Run `GOOS=linux GOARCH=amd64 go build -o myapp-linux-amd64 .`
+2. Run `GOOS=darwin GOARCH=arm64 go build -o myapp-darwin-arm64 .`
+3. Run `GOOS=windows GOARCH=amd64 go build -o myapp-windows-amd64.exe .`
+4. Inspect with `file myapp-*` (Linux/macOS) or check file extensions and sizes
 
 ```bash
-# Smoke-test sequence for the bookmark manager example
-curl -s -X POST http://localhost:8080/bookmarks \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://go.dev","tags":["golang"]}'
-
-curl -s http://localhost:8080/bookmarks | jq .
-
-curl -s -X DELETE http://localhost:8080/bookmarks/1
-
-curl -s http://localhost:8080/health
+#!/usr/bin/env bash
+set -e
+for target in "linux/amd64" "darwin/arm64" "windows/amd64"; do
+    IFS='/' read -r os arch <<< "$target"
+    ext=""
+    [ "$os" = "windows" ] && ext=".exe"
+    GOOS=$os GOARCH=$arch go build \
+        -ldflags="-X main.version=1.0.0" \
+        -o "dist/myapp-${os}-${arch}${ext}" .
+    echo "Built: dist/myapp-${os}-${arch}${ext}"
+done
 ```
 
 **Expected output:**
 ```
-{"id":1,"url":"https://go.dev","tags":["golang"],"created_at":"2024-01-15T10:00:00Z"}
-[{"id":1,"url":"https://go.dev","tags":["golang"],"created_at":"..."}]
-(empty — 204 No Content)
-{"status":"ok","version":"v1.0.0","build_time":"2024-01-15T10:00:00Z"}
+Built: dist/myapp-linux-amd64
+Built: dist/myapp-darwin-arm64
+Built: dist/myapp-windows-amd64.exe
 ```
 
-**Checkpoint:** All four smoke-test commands succeed. `go test ./...` is green. `docker build` succeeds and the image is under 20 MB.
+**Checkpoint:** Three files appear in `dist/`. On Linux/macOS, `file myapp-linux-amd64` reports "ELF 64-bit". The Windows `.exe` is built even from a non-Windows host.
 
-**Extension ideas:** add a WebSocket "new bookmark" live feed; implement CSV export; write a GitHub Actions workflow that runs tests and builds the Docker image on every push.
+---
 
-## Closing Thought
+### Lab 4: go install vs go build — CLI Tool Installation
 
-Go's difficulty is front-loaded: the module system, explicit error handling, and concurrency model feel unfamiliar at first. But these constraints prevent entire categories of bugs. Your Go code is honest about what can fail, who owns the data, and where the concurrency lives.
+**What you'll practise:** Understanding the difference between `go install` (places binary in `$GOPATH/bin`) and `go build` (places binary in the current directory or specified output path).
 
-That honesty is the point.
+**Task:**
+Install `myapp` with `go install`, confirm it lands in `$GOPATH/bin`, run it from anywhere, then compare with `go build` which writes to the working directory.
+
+**Steps:**
+1. Run `go install .` from the `day-29/` directory
+2. Confirm the binary exists: `ls $(go env GOPATH)/bin/day-29` (or whichever name)
+3. Run it from a different directory: `cd /tmp && day-29 --version`
+4. Now run `go build -o ./myapp .` and confirm it only appears locally
+
+```bash
+# install to $GOPATH/bin
+go install .
+
+# confirm location
+ls "$(go env GOPATH)/bin/"
+
+# run from anywhere (assuming $GOPATH/bin is on $PATH)
+myapp --version
+
+# compare: go build writes locally only
+go build -o ./myapp-local .
+ls -la myapp-local
+```
+
+**Expected output:**
+```
+myapp v0.0.0 (built unknown)
+-rwxr-xr-x  1 user  staff  3.2M myapp-local
+```
+
+**Checkpoint:** `go install` makes the binary available system-wide (if `$GOPATH/bin` is on `$PATH`). `go build` creates it only in the current directory.
+
+---
+
+### Lab 5: goreleaser — Local Snapshot Release
+
+**What you'll practise:** Writing a `.goreleaser.yaml` configuration and running a local snapshot build to simulate a real multi-platform release.
+
+**Task:**
+Write a `.goreleaser.yaml` for the `myapp` binary targeting Linux, macOS, and Windows. Run `goreleaser release --snapshot --clean` to build all targets locally without publishing.
+
+**Steps:**
+1. Install goreleaser: `go install github.com/goreleaser/goreleaser/v2@latest`
+2. Create `.goreleaser.yaml` in `day-29/`
+3. Run `goreleaser release --snapshot --clean`
+4. Inspect the `dist/` directory
+
+```yaml
+# .goreleaser.yaml
+version: 2
+project_name: myapp
+
+builds:
+  - env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.buildTime={{.Date}}
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+```
+
+**Expected output:**
+```
+  • building                   binary=dist/myapp_linux_amd64/myapp
+  • building                   binary=dist/myapp_darwin_arm64/myapp
+  • building                   binary=dist/myapp_windows_amd64/myapp.exe
+  • archives                   archive=dist/myapp_linux_amd64.tar.gz
+  • checksums                  file=dist/checksums.txt
+```
+
+**Checkpoint:** `dist/` contains archives for all target platforms plus a `checksums.txt`. Each archive contains the binary with `--version` working correctly.
+
+---
+
+### Final Lab (Project): Docker Multi-Stage Build + goreleaser + ldflags
+
+**What you'll practise:** Combining version embedding, a multi-stage Dockerfile, and goreleaser into a complete publish-and-ship workflow.
+
+**Task:**
+Package the Day 22 notes API with a production-ready Dockerfile, add a `/health` endpoint that returns embedded version info, and produce a multi-platform release with goreleaser.
+
+**Steps:**
+1. Extract the Day 08 shape library into `day-29/shapes/` with proper exported types and package docs
+2. Write a `Dockerfile` for the Day 22 notes API using a multi-stage build
+3. Write a `.goreleaser.yaml` for the Day 20 `todo` CLI targeting Linux, macOS, and Windows
+4. Embed version + build time into the `todo` binary via `-ldflags`
+5. Add a `GET /health` endpoint that returns the version and build time as JSON
+6. Build and smoke-test the Docker image: `docker build -t notes-api . && docker run -p 8080:8080 notes-api`
+
+```go
+// health endpoint
+http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "status":     "ok",
+        "version":    version,
+        "build_time": buildTime,
+    })
+})
+```
+
+**Expected output:**
+```bash
+$ curl http://localhost:8080/health
+{"build_time":"2024-01-15T10:00:00Z","status":"ok","version":"v0.1.0"}
+
+$ docker images notes-api
+REPOSITORY   TAG      SIZE
+notes-api    latest   9.1MB
+```
+
+**Checkpoint:** The Docker image starts and responds to `/health` with version info. `goreleaser --snapshot --clean` produces archives for all three platforms. Run with: `docker build -t notes-api . && docker run -p 8080:8080 notes-api`
+
+**Extension ideas:** publish the shapes package to `pkg.go.dev` (make the repo public and push a tag); set up GitHub Actions to run `goreleaser` automatically on tag push.
 
 ## Official Documentation
 
-- [`crypto/aes`](https://pkg.go.dev/crypto/aes) — AES encryption for the password manager capstone option
-- [`net/http`](https://pkg.go.dev/net/http) — HTTP server and client for web service capstones
-- [`database/sql`](https://pkg.go.dev/database/sql) — SQL database layer for URL shortener and finance tracker
-- [`log/slog`](https://pkg.go.dev/log/slog) — structured logging recommended from day one of any capstone
-- [`text/template`](https://pkg.go.dev/text/template) — template rendering for static site generator capstone
-- [`encoding/json`](https://pkg.go.dev/encoding/json) — JSON serialisation used across all web service capstones
-- [Effective Go](https://go.dev/doc/effective_go) — canonical guide to idiomatic Go
-- [Go Tour](https://go.dev/tour/) — interactive refresher on any concept
-- [Go standard library](https://pkg.go.dev/std) — full index of all standard packages
+- [Go Modules Reference](https://go.dev/doc/modules/gomod-ref) — `go.mod` syntax, `module` path, `require` directives
+- [Module version numbering](https://go.dev/doc/modules/version-numbers) — semantic versioning rules for `v0`, `v1`, `v2+`
+- [Publishing a module](https://go.dev/doc/modules/publishing) — how to make a module available on `pkg.go.dev`
+- [`cmd/go` — go install](https://pkg.go.dev/cmd/go#hdr-Compile_and_install_packages_and_dependencies) — installing CLI binaries
+- [`cmd/go` — ldflags](https://pkg.go.dev/cmd/go#hdr-Compile_packages_and_dependencies) — embedding version info with `-ldflags "-X main.version=..."`
+- [`fmt`](https://pkg.go.dev/fmt) — `Printf` for printing version information at startup
+- [goreleaser documentation](https://goreleaser.com/intro/) — cross-platform release automation

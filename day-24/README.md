@@ -1,434 +1,503 @@
-# Day 24: Error Handling at Scale
+# Day 24: database/sql and SQLite
 
-## Core Concept: Errors Should Carry Context
+## Core Concept: One Interface, Many Drivers
 
-At scale, errors need to carry enough information for:
-1. The calling code to decide what to do (sentinel / type check)
-2. The human reading logs to understand what happened (message + context)
-3. The HTTP handler to return the right status code
-
-## Error Hierarchy Pattern
+`database/sql` is a generic interface — drivers plug in for each database. Import a driver for its side effect (registering itself):
 
 ```go
-// Sentinel errors — identity checks
-var (
-    ErrNotFound   = errors.New("not found")
-    ErrConflict   = errors.New("conflict")
-    ErrValidation = errors.New("validation failed")
+import (
+    "database/sql"
+    _ "modernc.org/sqlite" // registers "sqlite" driver
 )
 
-// Typed error — carries data + wraps a sentinel
-type AppError struct {
-    Code    string // machine-readable
-    Message string // human-readable
-    Err     error  // wrapped sentinel
-}
+db, err := sql.Open("sqlite", "notes.db")
+db.SetMaxOpenConns(1) // SQLite is single-writer
+defer db.Close()
+```
 
-func (e *AppError) Error() string { return e.Message }
-func (e *AppError) Unwrap() error { return e.Err }
+## Schema Migrations (Simple Pattern)
 
-func NotFound(resource, id string) *AppError {
-    return &AppError{
-        Code:    "NOT_FOUND",
-        Message: fmt.Sprintf("%s %q not found", resource, id),
-        Err:     ErrNotFound,
-    }
+```go
+func migrate(db *sql.DB) error {
+    _, err := db.Exec(`CREATE TABLE IF NOT EXISTS notes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        text       TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`)
+    return err
 }
 ```
 
-## HTTP Error Mapping
+## CRUD Operations
 
 ```go
-func httpStatus(err error) int {
-    switch {
-    case errors.Is(err, ErrNotFound):   return http.StatusNotFound
-    case errors.Is(err, ErrConflict):   return http.StatusConflict
-    case errors.Is(err, ErrValidation): return http.StatusBadRequest
-    default:                            return http.StatusInternalServerError
-    }
-}
+// Insert with prepared statement
+stmt, err := db.Prepare("INSERT INTO notes (text) VALUES (?)")
+defer stmt.Close()
+result, err := stmt.Exec(text)
+id, err := result.LastInsertId()
 
-func handleErr(w http.ResponseWriter, err error) {
-    var ae *AppError
-    if errors.As(err, &ae) {
-        writeJSON(w, httpStatus(err), map[string]string{
-            "code":    ae.Code,
-            "message": ae.Message,
-        })
-        return
-    }
-    http.Error(w, "internal server error", 500)
+// Query single row
+var n Note
+err := db.QueryRow("SELECT id, text, created_at FROM notes WHERE id = ?", id).
+    Scan(&n.ID, &n.Text, &n.CreatedAt)
+if errors.Is(err, sql.ErrNoRows) { /* not found */ }
+
+// Query multiple rows
+rows, err := db.Query("SELECT id, text FROM notes ORDER BY created_at DESC")
+defer rows.Close()
+for rows.Next() {
+    var n Note
+    rows.Scan(&n.ID, &n.Text)
+    notes = append(notes, n)
 }
+rows.Err() // always check after loop
 ```
 
-## errors.Join (Go 1.20+)
-
-Aggregate multiple errors:
+## Transactions
 
 ```go
-func validateNote(n Note) error {
-    var errs []error
-    if n.Text == "" { errs = append(errs, errors.New("text is required")) }
-    if len(n.Text) > 10000 { errs = append(errs, errors.New("text too long")) }
-    return errors.Join(errs...)
-}
+tx, err := db.Begin()
+if err != nil { return err }
+defer tx.Rollback() // no-op if committed
+
+_, err = tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", amount, from)
+if err != nil { return err }
+_, err = tx.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", amount, to)
+if err != nil { return err }
+
+return tx.Commit()
+```
+
+## Context-Aware Queries
+
+All `database/sql` methods have a `Context` variant — prefer them:
+
+```go
+db.QueryRowContext(ctx, "SELECT ...", args...)
+db.ExecContext(ctx, "INSERT ...", args...)
 ```
 
 ## Labs
 
-### Lab 1: Sentinel Errors
+### Lab 1: Open and Ping
 
-**What you'll practise:** Defining package-level sentinel errors and checking them with `errors.Is`.
+**What you'll practise:** Opening a SQLite database, pinging it, and closing it correctly with `defer`.
 
 **Task:**
-Define three sentinel errors — `ErrNotFound`, `ErrUnauthorized`, `ErrValidation` — in a package. Write a function that returns each based on a string argument. Verify with `errors.Is`.
+Open a SQLite database file, verify the connection is live with `db.Ping()`, print the driver name, then close the connection. Confirm that the driver registered itself via the blank import.
 
 **Steps:**
-1. Declare `var ErrNotFound = errors.New("not found")` etc. at package level
-2. Write `lookup(kind string) error` that returns the appropriate sentinel (or `nil`)
-3. In `main`, call `lookup` with each kind and assert with `errors.Is`
-4. Confirm that `errors.Is(ErrNotFound, ErrUnauthorized)` is `false`
+1. `go get modernc.org/sqlite`
+2. Import `_ "modernc.org/sqlite"` for the side-effect registration
+3. Call `sql.Open("sqlite", "lab.db")` — this does not actually connect yet
+4. Call `db.Ping()` to force a real connection; handle the error
 
 ```go
-var (
-    ErrNotFound     = errors.New("not found")
-    ErrUnauthorized = errors.New("unauthorized")
-    ErrValidation   = errors.New("validation failed")
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "log"
+    _ "modernc.org/sqlite"
 )
 
-func lookup(kind string) error {
-    switch kind {
-    case "notfound":
-        return ErrNotFound
-    case "auth":
-        return ErrUnauthorized
-    case "validation":
-        return ErrValidation
-    default:
-        return nil
-    }
-}
-
 func main() {
-    for _, kind := range []string{"notfound", "auth", "validation"} {
-        err := lookup(kind)
-        fmt.Printf("Is ErrNotFound: %v, Is ErrUnauthorized: %v, Is ErrValidation: %v\n",
-            errors.Is(err, ErrNotFound),
-            errors.Is(err, ErrUnauthorized),
-            errors.Is(err, ErrValidation),
-        )
+    db, err := sql.Open("sqlite", "lab.db")
+    if err != nil {
+        log.Fatal(err)
     }
+    defer db.Close()
+
+    if err := db.Ping(); err != nil {
+        log.Fatal("ping failed:", err)
+    }
+    fmt.Println("connected to SQLite")
+    fmt.Println("driver:", db.Driver())
 }
 ```
 
 **Expected output:**
 ```
-Is ErrNotFound: true, Is ErrUnauthorized: false, Is ErrValidation: false
-Is ErrNotFound: false, Is ErrUnauthorized: true, Is ErrValidation: false
-Is ErrNotFound: false, Is ErrUnauthorized: false, Is ErrValidation: true
+connected to SQLite
+driver: &sqlite.Driver{}
 ```
 
-**Checkpoint:** Each call to `errors.Is` returns true only for the correct sentinel.
+**Checkpoint:** The program exits cleanly, `lab.db` is created on disk, and the ping succeeds.
 
 ---
 
-### Lab 2: Custom Error Type
+### Lab 2: Create Table and Insert
 
-**What you'll practise:** Defining a struct error type with `Error()` and `Unwrap()`, and checking it with `errors.As`.
+**What you'll practise:** Running DDL with `db.Exec`, preparing an INSERT statement, and executing it multiple times.
 
 **Task:**
-Define `AppError{Code string, Message string, Err error}`. Implement `Error()` and `Unwrap()`. Write a function that returns an `*AppError` wrapping `ErrNotFound`. Use `errors.As` to extract the `AppError` and inspect its `Code`.
+Create a `books` table with `id`, `title`, and `author` columns. Use a prepared statement to insert three rows in a loop.
 
 **Steps:**
-1. Define the struct and its two methods
-2. Write `NotFoundError(resource, id string) *AppError` constructor
-3. In `main`, call the constructor, then use `errors.As` to extract and print `ae.Code`
-4. Verify that `errors.Is(err, ErrNotFound)` is still `true` (because `Unwrap` returns it)
+1. Execute `CREATE TABLE IF NOT EXISTS books (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, author TEXT NOT NULL)`
+2. Prepare `INSERT INTO books (title, author) VALUES (?, ?)`
+3. Loop over a slice of `{title, author}` structs and execute the statement
+4. Print the last inserted ID for each row
 
 ```go
-type AppError struct {
-    Code    string
-    Message string
-    Err     error
+_, err = db.Exec(`CREATE TABLE IF NOT EXISTS books (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    title  TEXT NOT NULL,
+    author TEXT NOT NULL
+)`)
+if err != nil {
+    log.Fatal(err)
 }
 
-func (e *AppError) Error() string { return e.Message }
-func (e *AppError) Unwrap() error { return e.Err }
+stmt, err := db.Prepare("INSERT INTO books (title, author) VALUES (?, ?)")
+if err != nil {
+    log.Fatal(err)
+}
+defer stmt.Close()
 
-func NotFoundError(resource, id string) *AppError {
-    return &AppError{
-        Code:    "NOT_FOUND",
-        Message: fmt.Sprintf("%s %q not found", resource, id),
-        Err:     ErrNotFound,
+books := []struct{ Title, Author string }{
+    {"The Go Programming Language", "Donovan & Kernighan"},
+    {"Clean Code", "Robert C. Martin"},
+    {"Designing Data-Intensive Applications", "Martin Kleppmann"},
+}
+for _, b := range books {
+    res, err := stmt.Exec(b.Title, b.Author)
+    if err != nil {
+        log.Fatal(err)
     }
-}
-
-err := NotFoundError("note", "42")
-var ae *AppError
-if errors.As(err, &ae) {
-    fmt.Println("code:", ae.Code)
-    fmt.Println("message:", ae.Message)
-}
-fmt.Println("is ErrNotFound:", errors.Is(err, ErrNotFound))
-```
-
-**Expected output:**
-```
-code: NOT_FOUND
-message: note "42" not found
-is ErrNotFound: true
-```
-
-**Checkpoint:** `errors.As` succeeds and `errors.Is` works through the `Unwrap` chain.
-
----
-
-### Lab 3: Error Wrapping Chain
-
-**What you'll practise:** Wrapping errors three levels deep with `fmt.Errorf %w` and traversing the chain manually.
-
-**Task:**
-Simulate a three-level call stack: `db layer` returns a sentinel, `service layer` wraps it, `handler layer` wraps again. Unwrap the chain manually with a loop and print each level. Then use `errors.Is` at the outermost error.
-
-**Steps:**
-1. Define `dbErr = errors.New("row not found")`
-2. Wrap: `svcErr = fmt.Errorf("service: %w", dbErr)`
-3. Wrap again: `handlerErr = fmt.Errorf("handler: %w", svcErr)`
-4. Loop using `errors.Unwrap` to traverse the chain, printing each error
-
-```go
-dbErr      := errors.New("row not found")
-svcErr     := fmt.Errorf("service lookup: %w", dbErr)
-handlerErr := fmt.Errorf("handle request: %w", svcErr)
-
-fmt.Println("full chain:", handlerErr)
-fmt.Println("errors.Is (dbErr):", errors.Is(handlerErr, dbErr))
-
-// Manual unwrap
-for err := error(handlerErr); err != nil; err = errors.Unwrap(err) {
-    fmt.Println("unwrap:", err)
+    id, _ := res.LastInsertId()
+    fmt.Printf("inserted id=%d title=%q\n", id, b.Title)
 }
 ```
 
 **Expected output:**
 ```
-full chain: handle request: service lookup: row not found
-errors.Is (dbErr): true
-unwrap: handle request: service lookup: row not found
-unwrap: service lookup: row not found
-unwrap: row not found
+inserted id=1 title="The Go Programming Language"
+inserted id=2 title="Clean Code"
+inserted id=3 title="Designing Data-Intensive Applications"
 ```
 
-**Checkpoint:** `errors.Is` finds the root sentinel through three wrapping layers.
+**Checkpoint:** Running the program a second time inserts three more rows (IDs 4-6) because `IF NOT EXISTS` keeps the existing table.
 
 ---
 
-### Lab 4: errors.Join
+### Lab 3: Query Rows into a Struct Slice
 
-**What you'll practise:** Aggregating multiple validation errors with `errors.Join` (Go 1.20+) and verifying individual errors remain findable.
+**What you'll practise:** Using `db.QueryContext`, iterating with `rows.Next()`/`rows.Scan()`, and checking `rows.Err()` after the loop.
 
 **Task:**
-Write a `validateUser(name, email string) error` function that collects failures (empty name, missing `@` in email) and returns them joined. Call it with invalid input and print the result. Verify `errors.Is` still works on joined errors.
+Query all books from the table, scan each row into a `Book` struct, and print the results. Handle the mandatory `rows.Close()` and `rows.Err()` checks.
 
 **Steps:**
-1. Collect errors into a `[]error` slice
-2. Return `errors.Join(errs...)` (returns `nil` if the slice is empty)
-3. Print the error; observe all messages appear
-4. Confirm `errors.Is(joinedErr, ErrValidation)` is `true` if you wrap sentinels
+1. Call `db.QueryContext(ctx, "SELECT id, title, author FROM books ORDER BY id")`
+2. `defer rows.Close()`
+3. Loop with `rows.Next()`, call `rows.Scan(&b.ID, &b.Title, &b.Author)`
+4. After the loop, check `rows.Err()`
 
 ```go
-var ErrValidation = errors.New("validation failed")
-
-func validateUser(name, email string) error {
-    var errs []error
-    if name == "" {
-        errs = append(errs, fmt.Errorf("%w: name is required", ErrValidation))
-    }
-    if !strings.Contains(email, "@") {
-        errs = append(errs, fmt.Errorf("%w: email must contain @", ErrValidation))
-    }
-    return errors.Join(errs...)
+type Book struct {
+    ID     int
+    Title  string
+    Author string
 }
 
-err := validateUser("", "not-an-email")
-fmt.Println(err)
-fmt.Println("is ErrValidation:", errors.Is(err, ErrValidation))
-fmt.Println("valid user:", validateUser("Alice", "alice@example.com"))
+ctx := context.Background()
+rows, err := db.QueryContext(ctx, "SELECT id, title, author FROM books ORDER BY id")
+if err != nil {
+    log.Fatal(err)
+}
+defer rows.Close()
+
+var books []Book
+for rows.Next() {
+    var b Book
+    if err := rows.Scan(&b.ID, &b.Title, &b.Author); err != nil {
+        log.Fatal(err)
+    }
+    books = append(books, b)
+}
+if err := rows.Err(); err != nil {
+    log.Fatal(err)
+}
+for _, b := range books {
+    fmt.Printf("%d: %s by %s\n", b.ID, b.Title, b.Author)
+}
 ```
 
 **Expected output:**
 ```
-validation failed: name is required
-validation failed: email must contain @
-is ErrValidation: true
-valid user: <nil>
+1: The Go Programming Language by Donovan & Kernighan
+2: Clean Code by Robert C. Martin
+3: Designing Data-Intensive Applications by Martin Kleppmann
 ```
 
-**Checkpoint:** All error messages appear in the output; `errors.Is` works through the joined error.
+**Checkpoint:** All rows appear; removing `rows.Err()` check and introducing a bug should surface an error you would otherwise miss.
 
 ---
 
-### Lab 5: HTTP Error Mapping
+### Lab 4: QueryRow — Single-Row Lookup
 
-**What you'll practise:** Writing an `HTTPStatus(err error) int` function that maps `AppError` codes to HTTP status codes using `errors.As`.
+**What you'll practise:** Using `db.QueryRowContext` for single-row queries and handling `sql.ErrNoRows` explicitly.
 
 **Task:**
-Write `HTTPStatus` using a switch on `AppError.Code`. Demonstrate it by calling it with errors produced by `NotFoundError`, `ConflictError`, and `ValidationError` constructors and printing the status code for each.
+Write a `getBook(ctx, db, id) (Book, error)` function. Return a meaningful error message when the ID does not exist rather than letting the caller see a raw `sql.ErrNoRows`.
 
 **Steps:**
-1. Add `ConflictError` and `ValidationError` constructors alongside `NotFoundError`
-2. Write `HTTPStatus(err error) int` that uses `errors.As` to get `*AppError`, then switches on `ae.Code`
-3. Default to 500 for unknown errors
-4. Print results for all three error types plus an untyped error
+1. Call `db.QueryRowContext(ctx, "SELECT id, title, author FROM books WHERE id = ?", id)`
+2. Call `.Scan(...)` and check the error
+3. If `errors.Is(err, sql.ErrNoRows)`, return a user-friendly `fmt.Errorf("book %d not found", id)`
+4. Test with a valid ID and an ID that does not exist
 
 ```go
-func HTTPStatus(err error) int {
-    var ae *AppError
-    if !errors.As(err, &ae) {
-        return http.StatusInternalServerError
+func getBook(ctx context.Context, db *sql.DB, id int) (Book, error) {
+    var b Book
+    err := db.QueryRowContext(ctx, "SELECT id, title, author FROM books WHERE id = ?", id).
+        Scan(&b.ID, &b.Title, &b.Author)
+    if errors.Is(err, sql.ErrNoRows) {
+        return Book{}, fmt.Errorf("book %d not found", id)
     }
-    switch ae.Code {
-    case "NOT_FOUND":
-        return http.StatusNotFound
-    case "CONFLICT":
-        return http.StatusConflict
-    case "VALIDATION":
-        return http.StatusBadRequest
-    default:
-        return http.StatusInternalServerError
+    if err != nil {
+        return Book{}, err
     }
+    return b, nil
 }
-
-fmt.Println(HTTPStatus(NotFoundError("note", "1")))    // 404
-fmt.Println(HTTPStatus(ConflictError("note", "dup")))  // 409
-fmt.Println(HTTPStatus(ValidationError("text empty"))) // 400
-fmt.Println(HTTPStatus(errors.New("unknown")))         // 500
 ```
 
 **Expected output:**
 ```
-404
-409
-400
-500
+book: {1 The Go Programming Language Donovan & Kernighan}
+error: book 999 not found
 ```
 
-**Checkpoint:** Each status code matches the expected HTTP constant; untyped errors always return 500.
+**Checkpoint:** The function returns a typed error for missing rows, not the raw `sql.ErrNoRows`.
 
 ---
 
-### Lab 6: Error Middleware for chi
+### Lab 5: Transactions
 
-**What you'll practise:** Writing chi middleware that catches `*AppError` from handlers and writes a structured JSON error response.
+**What you'll practise:** Starting a transaction, running multiple statements atomically, and rolling back on error with a deferred `tx.Rollback`.
 
 **Task:**
-Define a convention where handlers return errors by setting a value in the request context. Write `ErrorMiddleware` that reads that value after the handler returns and calls `handleErr` to write the correct JSON response.
+Write a `transferTag(ctx, db, fromID, toID int, tag string) error` function that atomically removes a tag from one book and adds it to another using two UPDATE statements in a single transaction.
 
 **Steps:**
-1. Define a context key type and `SetError(ctx, err) context.Context` / `GetError(ctx) error` helpers
-2. Write `ErrorMiddleware(next http.Handler) http.Handler` that reads the error after `next.ServeHTTP`
-3. In `handleErr`, use `HTTPStatus` and write `{"code":"...","message":"..."}` JSON
-4. Wire it up on a chi router and test with a handler that sets a not-found error
+1. `tx, err := db.BeginTx(ctx, nil)`; `defer tx.Rollback()`
+2. Execute first UPDATE; return if error
+3. Execute second UPDATE; return if error
+4. Call `tx.Commit()`; the deferred `Rollback` is a no-op after a successful commit
 
 ```go
-type ctxKey struct{}
+func transferTag(ctx context.Context, db *sql.DB, fromID, toID int, tag string) error {
+    tx, err := db.BeginTx(ctx, nil)
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback() // no-op after Commit
 
-func SetError(ctx context.Context, err error) context.Context {
-    return context.WithValue(ctx, ctxKey{}, err)
+    _, err = tx.ExecContext(ctx, "UPDATE books SET author = REPLACE(author, ?, '') WHERE id = ?", tag, fromID)
+    if err != nil {
+        return err
+    }
+    _, err = tx.ExecContext(ctx, "UPDATE books SET author = author || ? WHERE id = ?", tag, toID)
+    if err != nil {
+        return err
+    }
+    return tx.Commit()
+}
+```
+
+**Expected output:**
+```
+transfer complete
+```
+
+**Checkpoint:** If either UPDATE returns an error the transaction rolls back; both updates are invisible until `Commit` succeeds.
+
+---
+
+### Lab 6: Prepared Statements Performance
+
+**What you'll practise:** Preparing a statement once and executing it many times, observing the benefit of reuse.
+
+**Task:**
+Insert 1 000 rows using a single prepared statement and time it. Then repeat the insertion using bare `db.ExecContext` calls (no prepare). Print both durations.
+
+**Steps:**
+1. Truncate or recreate the table
+2. Time the `stmt.Exec` loop (prepare once, execute 1 000 times)
+3. Time the `db.ExecContext` loop (no explicit prepare)
+4. Print both durations side by side
+
+```go
+// Prepared
+start := time.Now()
+stmt, _ := db.Prepare("INSERT INTO books (title, author) VALUES (?, ?)")
+for i := 0; i < 1000; i++ {
+    stmt.Exec(fmt.Sprintf("Book %d", i), "Author")
+}
+stmt.Close()
+preparedDur := time.Since(start)
+
+// Unprepared
+start = time.Now()
+for i := 0; i < 1000; i++ {
+    db.ExecContext(ctx, "INSERT INTO books (title, author) VALUES (?, ?)",
+        fmt.Sprintf("Book %d", i), "Author")
+}
+unpreparedDur := time.Since(start)
+
+fmt.Printf("prepared:   %v\nunprepared: %v\n", preparedDur, unpreparedDur)
+```
+
+**Expected output:**
+```
+prepared:   18ms
+unprepared: 22ms
+```
+
+**Checkpoint:** The prepared version is consistently faster; both loops insert exactly 1 000 rows.
+
+---
+
+### Lab 7: Schema Migrations
+
+**What you'll practise:** Implementing a simple migration runner that tracks applied versions in a `schema_migrations` table and skips already-applied migrations.
+
+**Task:**
+Define a `[]Migration{Version int, SQL string}` slice. Write a `runMigrations(db)` function that creates the tracking table if needed, then applies only the migrations not yet recorded.
+
+**Steps:**
+1. Create `schema_migrations(version INTEGER PRIMARY KEY, applied_at DATETIME)` if it does not exist
+2. For each migration, query whether its version is already in the table
+3. If not, execute the migration SQL and insert the version into the tracking table — all in one transaction
+4. Run the program twice; the second run should skip all migrations
+
+```go
+type Migration struct {
+    Version int
+    SQL     string
 }
 
-func GetError(ctx context.Context) error {
-    err, _ := ctx.Value(ctxKey{}).(error)
-    return err
+var migrations = []Migration{
+    {1, `CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)`},
+    {2, `ALTER TABLE notes ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP`},
 }
 
-func ErrorMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        ctx := r.Context()
-        next.ServeHTTP(w, r.WithContext(ctx))
-        if err := GetError(r.Context()); err != nil {
-            handleErr(w, err)
+func runMigrations(db *sql.DB) error {
+    _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+        version    INTEGER PRIMARY KEY,
+        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`)
+    if err != nil {
+        return err
+    }
+    for _, m := range migrations {
+        var exists int
+        db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version = ?", m.Version).Scan(&exists)
+        if exists > 0 {
+            fmt.Printf("migration %d already applied, skipping\n", m.Version)
+            continue
         }
-    })
+        tx, _ := db.Begin()
+        tx.Exec(m.SQL)
+        tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", m.Version)
+        if err := tx.Commit(); err != nil {
+            tx.Rollback()
+            return err
+        }
+        fmt.Printf("applied migration %d\n", m.Version)
+    }
+    return nil
 }
 ```
 
-**Expected output:**
+**Expected output (first run):**
 ```
-$ curl -s http://localhost:8080/notes/999
-{"code":"NOT_FOUND","message":"note \"999\" not found"}
+applied migration 1
+applied migration 2
 ```
 
-**Checkpoint:** The handler does not write the response directly; the middleware writes it from the error context value.
+**Expected output (second run):**
+```
+migration 1 already applied, skipping
+migration 2 already applied, skipping
+```
+
+**Checkpoint:** Migrations are idempotent; a new migration appended to the slice runs only once.
 
 ---
 
-### Final Lab: Clean Error Layer
+### Final Lab: Notes API + SQLite
 
-**What you'll practise:** Wiring sentinels, `AppError`, HTTP status mapping, `errors.Join`, and error middleware into a unified error layer.
+**What you'll practise:** Replacing an in-memory store with a real SQLite database, using prepared statements, transactions, and an in-memory test DB.
 
 **Task:**
-Refactor the Day 22/23 Notes API so that every error flows through the error hierarchy. No handler calls `http.Error` directly. All HTTP status codes are derived from `HTTPStatus`. Input validation uses `errors.Join`.
+Extend the Day 22 Notes API to persist data in SQLite. Replace `NoteStore` with a `DB` struct wrapping `*sql.DB`. Apply a migration on startup. Use transactions for mutating operations. Test with `:memory:`.
 
 **Steps:**
-1. Define `ErrNotFound`, `ErrConflict`, `ErrValidation` sentinels and the `AppError` type
-2. Replace all `http.Error(w, "...", 404)` calls with `handleErr(w, NotFoundError("note", id))`
-3. Add `validateNote(text string) error` using `errors.Join` for multi-field validation
-4. Write `ErrorMiddleware` that catches `*AppError` from context and writes structured JSON
-5. Write tests asserting exact HTTP status codes for each error type
+1. Define `DB{db *sql.DB}` with the same method signatures as `NoteStore`
+2. Run `runMigrations` on startup to create the `notes` table
+3. Implement `Create`, `List`, `Get`, `Update`, `Delete` using prepared statements
+4. Wrap `Create`, `Update`, `Delete` in transactions
+5. In tests, open `sql.Open("sqlite", ":memory:")` for a clean database on each test run
 
 ```go
-// Test example
-func TestNotFoundReturns404(t *testing.T) {
-    rr := httptest.NewRecorder()
-    req := httptest.NewRequest(http.MethodGet, "/api/notes/9999", nil)
-    router.ServeHTTP(rr, req)
-    if rr.Code != http.StatusNotFound {
-        t.Fatalf("expected 404, got %d", rr.Code)
+type DB struct{ db *sql.DB }
+
+func (s *DB) Create(ctx context.Context, text string) (Note, error) {
+    tx, err := s.db.BeginTx(ctx, nil)
+    if err != nil {
+        return Note{}, err
     }
-    var body map[string]string
-    json.NewDecoder(rr.Body).Decode(&body)
-    if body["code"] != "NOT_FOUND" {
-        t.Fatalf("expected code NOT_FOUND, got %q", body["code"])
+    defer tx.Rollback()
+    res, err := tx.ExecContext(ctx, "INSERT INTO notes (text) VALUES (?)", text)
+    if err != nil {
+        return Note{}, err
     }
+    id, _ := res.LastInsertId()
+    if err := tx.Commit(); err != nil {
+        return Note{}, err
+    }
+    return s.Get(ctx, strconv.FormatInt(id, 10))
 }
 ```
 
 **Expected output:**
 ```
-$ curl -s http://localhost:8080/api/notes/999
-{"code":"NOT_FOUND","message":"note \"999\" not found"}
-$ curl -s -X POST -d '{"text":""}' http://localhost:8080/api/notes
-{"code":"VALIDATION","message":"validation failed: text is required"}
+$ go run .
+migrations applied
+listening on :8080
 $ go test -v ./...
---- PASS: TestNotFoundReturns404 (0.00s)
---- PASS: TestValidationReturns400 (0.00s)
+--- PASS: TestCreate (0.00s)
+--- PASS: TestGetNotFound (0.00s)
+--- PASS: TestCRUDCycle (0.00s)
 PASS
 ```
 
-**Checkpoint:** No handler writes directly to `w` on error paths; all error responses have a `code` field; tests cover all three error types.
+**Checkpoint:** Data survives a server restart (it is on disk); tests use `:memory:` so they are stateless.
 
 ---
 
-## Day Project: Clean Error Layer
+## Day Project: Persist Notes to SQLite
 
-Refactor the Day 22/23 notes API:
-1. Define `ErrNotFound`, `ErrValidation`, `ErrConflict` sentinels
-2. Create `AppError` with `Code`, `Message`, and wrapped sentinel
-3. Replace `http.Error(w, "...", 404)` calls with `handleErr(w, NotFound("note", id))`
-4. Add input validation in `createNote` / `updateNote`
-5. Write tests that assert correct HTTP status codes for each error type
+Extend the Day 22 notes API to use SQLite instead of the in-memory store:
+1. Replace `Store` with a `DB` struct wrapping `*sql.DB`
+2. Implement the same CRUD interface using prepared statements
+3. Wrap all mutations in transactions
+4. Write integration tests using an in-memory SQLite DB (`:memory:`)
 
 Run with: `go run .`
 
-**Extension ideas:** add request ID to error responses by reading from context; log internal errors with full stack via `runtime/debug.Stack()`.
+**Extension ideas:** add full-text search with SQLite FTS5; implement cursor-based pagination.
 
 ## Official Documentation
 
-- [`errors`](https://pkg.go.dev/errors) — `New`, `Is`, `As`, `Join` (Go 1.20+), `Unwrap`
-- [`net/http`](https://pkg.go.dev/net/http) — `StatusNotFound`, `StatusConflict`, `StatusBadRequest`, `StatusInternalServerError`, `Error`
-- [`fmt`](https://pkg.go.dev/fmt) — `Errorf` with `%w` verb for error wrapping
-- [`runtime/debug`](https://pkg.go.dev/runtime/debug) — `Stack` for capturing stack traces in error logs
-- [Go Blog: Error handling and Go](https://go.dev/blog/error-handling-and-go)
-- [Go Blog: Working with Errors in Go 1.13](https://go.dev/blog/go1.13-errors) — `errors.Is`, `errors.As`, `%w` wrapping
-- [Language Spec — Errors](https://go.dev/ref/spec#Errors)
+- [`database/sql`](https://pkg.go.dev/database/sql) — `Open`, `DB`, `Stmt`, `Row`, `Rows`, `Tx`, `ErrNoRows`, `QueryRow`, `Query`, `Exec`, `Begin`, `Prepare`, context variants (`QueryRowContext`, `ExecContext`)
+- [`errors`](https://pkg.go.dev/errors) — `Is` for checking `sql.ErrNoRows`
+- [`context`](https://pkg.go.dev/context) — `Context`-aware query methods
+- [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) — pure-Go SQLite driver (CGo-free)
+- [Go Blog: Accessing a relational database](https://go.dev/doc/tutorial/database-access) — official database/sql tutorial
+- [Go Blog: Organizing a Go module](https://go.dev/blog/organizing-go-code)

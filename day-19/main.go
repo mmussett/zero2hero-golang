@@ -1,136 +1,90 @@
 package main
 
 import (
-	"bytes"
-	"encoding/csv"
-	"encoding/json"
+	"bufio"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 )
 
-type LogLevel int
+type Config map[string]map[string]string
 
-const (
-	LevelDebug LogLevel = iota
-	LevelInfo
-	LevelWarn
-	LevelError
-)
+const sampleINI = `# Application configuration
 
-func (l LogLevel) String() string {
-	return [...]string{"debug", "info", "warn", "error"}[l]
-}
+[database]
+host = localhost
+port = 5432
+name = mydb
+user = admin
 
-func (l LogLevel) MarshalJSON() ([]byte, error) {
-	return json.Marshal(l.String())
-}
+[server]
+port = 8080
+debug = true
+timeout = 30s
 
-func (l *LogLevel) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		return err
-	}
-	switch strings.ToLower(s) {
-	case "debug":
-		*l = LevelDebug
-	case "info":
-		*l = LevelInfo
-	case "warn":
-		*l = LevelWarn
-	case "error":
-		*l = LevelError
-	default:
-		return fmt.Errorf("unknown log level %q", s)
-	}
-	return nil
-}
+[logging]
+level = info
+file = app.log
+`
 
-type DatabaseConfig struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
-	Name string `json:"name"`
-}
+func parseINI(text string) (Config, error) {
+	cfg := make(Config)
+	section := ""
 
-type Config struct {
-	Server   string         `json:"server"`
-	Port     int            `json:"port"`
-	Database DatabaseConfig `json:"database"`
-	LogLevel LogLevel       `json:"log_level"`
-	Debug    bool           `json:"debug"`
-}
+	scanner := bufio.NewScanner(strings.NewReader(text))
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
 
-func defaultConfig() Config {
-	return Config{
-		Server:   "localhost",
-		Port:     8080,
-		Database: DatabaseConfig{Host: "localhost", Port: 5432, Name: "mydb"},
-		LogLevel: LevelInfo,
-	}
-}
-
-func loadFromJSON(data []byte) (Config, error) {
-	cfg := defaultConfig()
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("unmarshal: %w", err)
-	}
-	return cfg, nil
-}
-
-func applyEnvOverrides(cfg *Config) {
-	if v := os.Getenv("SERVER_PORT"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil {
-			cfg.Port = p
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
 		}
-	}
-	if v := os.Getenv("LOG_LEVEL"); v != "" {
-		var l LogLevel
-		if err := json.Unmarshal([]byte(`"`+v+`"`), &l); err == nil {
-			cfg.LogLevel = l
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = line[1 : len(line)-1]
+			if cfg[section] == nil {
+				cfg[section] = make(map[string]string)
+			}
+			continue
 		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("line %d: invalid format %q", lineNum, line)
+		}
+		if section == "" {
+			return nil, fmt.Errorf("line %d: key=value outside section", lineNum)
+		}
+		cfg[section][strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 	}
-	if v := os.Getenv("DEBUG"); v == "true" || v == "1" {
-		cfg.Debug = true
-	}
+	return cfg, scanner.Err()
 }
 
-func exportCSV(cfg Config) string {
-	var buf bytes.Buffer
-	w := csv.NewWriter(&buf)
-	w.Write([]string{"key", "value"})
-	w.Write([]string{"server", cfg.Server})
-	w.Write([]string{"port", strconv.Itoa(cfg.Port)})
-	w.Write([]string{"db_host", cfg.Database.Host})
-	w.Write([]string{"db_port", strconv.Itoa(cfg.Database.Port)})
-	w.Write([]string{"db_name", cfg.Database.Name})
-	w.Write([]string{"log_level", cfg.LogLevel.String()})
-	w.Write([]string{"debug", strconv.FormatBool(cfg.Debug)})
-	w.Flush()
-	return buf.String()
+func writeINI(cfg Config, w *os.File) {
+	for section, keys := range cfg {
+		fmt.Fprintf(w, "[%s]\n", section)
+		for k, v := range keys {
+			fmt.Fprintf(w, "%s = %s\n", k, v)
+		}
+		fmt.Fprintln(w)
+	}
 }
 
 func main() {
-	jsonData := []byte(`{
-		"server": "api.example.com",
-		"port": 443,
-		"database": {"host": "db.example.com", "port": 5432, "name": "prod"},
-		"log_level": "warn",
-		"debug": false
-	}`)
+	fmt.Print("=== INI Config Reader ===\n\n")
 
-	cfg, err := loadFromJSON(jsonData)
+	cfg, err := parseINI(sampleINI)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "parse error: %v\n", err)
 		os.Exit(1)
 	}
 
-	applyEnvOverrides(&cfg)
+	for _, sec := range []string{"database", "server", "logging"} {
+		fmt.Printf("[%s]\n", sec)
+		for k, v := range cfg[sec] {
+			fmt.Printf("  %-12s = %s\n", k, v)
+		}
+	}
 
-	out, _ := json.MarshalIndent(cfg, "", "  ")
-	fmt.Println("=== Loaded Config (JSON) ===")
-	fmt.Println(string(out))
-
-	fmt.Println("\n=== CSV Export ===")
-	fmt.Print(exportCSV(cfg))
+	fmt.Print("\n=== Round-trip: write back to stdout ===\n\n")
+	writeINI(cfg, os.Stdout)
 }

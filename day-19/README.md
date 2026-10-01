@@ -1,525 +1,477 @@
-# Day 19: JSON and CSV Encoding
+# Day 19: File I/O and the io Package
 
-## Core Concept: Struct Tags Drive Serialisation
+## Core Concept: Everything Is a Reader or Writer
 
-Go's `encoding/json` uses reflection and struct field tags to map between Go types and JSON automatically.
+Go's I/O model is built on two tiny interfaces — `io.Reader` and `io.Writer` — that compose into arbitrarily powerful pipelines.
+
+## Reading Files
 
 ```go
-type User struct {
-    ID        int    `json:"id"`
-    Name      string `json:"name"`
-    Email     string `json:"email,omitempty"` // omit if empty
-    Password  string `json:"-"`               // never serialise
-    CreatedAt time.Time `json:"created_at"`
+// Simple: read entire file into memory
+data, err := os.ReadFile("config.txt")
+
+// Streaming: line by line
+f, err := os.Open("large.txt")
+defer f.Close()
+
+scanner := bufio.NewScanner(f)
+for scanner.Scan() {
+    line := scanner.Text()
 }
-
-u := User{ID: 1, Name: "Alice"}
-data, err := json.Marshal(u)
-// {"id":1,"name":"Alice","created_at":"0001-01-01T00:00:00Z"}
-
-var parsed User
-err = json.Unmarshal(data, &parsed)
+if err := scanner.Err(); err != nil { /* ... */ }
 ```
 
-## Streaming JSON (for large payloads)
+## Writing Files
 
 ```go
-// Encode to a writer
-enc := json.NewEncoder(os.Stdout)
-enc.SetIndent("", "  ")
-enc.Encode(users)
-
-// Decode from a reader
-dec := json.NewDecoder(resp.Body)
-dec.DisallowUnknownFields() // strict mode
-var result Response
-err := dec.Decode(&result)
-```
-
-## Raw JSON and Dynamic Parsing
-
-```go
-// Delay parsing with json.RawMessage
-type Envelope struct {
-    Type    string          `json:"type"`
-    Payload json.RawMessage `json:"payload"`
-}
-
-// Parse into map for unknown structure
-var m map[string]any
-json.Unmarshal(data, &m)
-```
-
-## Custom Marshaling
-
-```go
-type Duration time.Duration
-
-func (d Duration) MarshalJSON() ([]byte, error) {
-    return json.Marshal(time.Duration(d).String())
-}
-
-func (d *Duration) UnmarshalJSON(b []byte) error {
-    var s string
-    if err := json.Unmarshal(b, &s); err != nil { return err }
-    dur, err := time.ParseDuration(s)
-    *d = Duration(dur)
-    return err
-}
-```
-
-## encoding/csv
-
-```go
-// Reading
-r := csv.NewReader(strings.NewReader(data))
-r.FieldsPerRecord = -1  // variable column count
-records, err := r.ReadAll()
+// Simple
+os.WriteFile("out.txt", []byte("hello"), 0o644)
 
 // Streaming
-for {
-    record, err := r.Read()
-    if err == io.EOF { break }
-}
+f, err := os.Create("out.txt")
+defer f.Close()
 
-// Writing
-w := csv.NewWriter(os.Stdout)
-w.Write([]string{"name", "age", "email"})
-w.Flush()
+w := bufio.NewWriter(f)
+fmt.Fprintln(w, "line 1")
+w.Flush() // must flush buffered writer
+```
+
+## io.Copy
+
+Copies from a `Reader` to a `Writer` efficiently (64 KB chunks):
+
+```go
+src, _ := os.Open("input.txt")
+dst, _ := os.Create("output.txt")
+defer src.Close(); defer dst.Close()
+n, err := io.Copy(dst, src)
+```
+
+## Directory Walking
+
+```go
+err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+    if err != nil { return err }
+    if !d.IsDir() {
+        fmt.Println(path, d.Name())
+    }
+    return nil
+})
+```
+
+## Useful io Functions
+
+| Function | Purpose |
+|----------|---------|
+| `io.ReadAll(r)` | Read entire Reader into `[]byte` |
+| `io.Copy(dst, src)` | Stream from Reader to Writer |
+| `io.MultiReader(rs...)` | Concatenate multiple Readers |
+| `io.TeeReader(r, w)` | Read from r, simultaneously write to w |
+| `io.LimitReader(r, n)` | Read at most n bytes |
+| `io.Pipe()` | Synchronous in-memory pipe |
+| `io.Discard` | /dev/null Writer |
+
+## Temporary Files
+
+```go
+f, err := os.CreateTemp("", "prefix-*.txt")
+defer os.Remove(f.Name())
+defer f.Close()
 ```
 
 ## Labs
 
-### Lab 1: Basic JSON Marshal/Unmarshal
+### Lab 1: os.ReadFile / os.WriteFile — Simple File I/O
 
-**What you'll practise:** Encoding a struct to JSON and decoding it back using `json.Marshal` and `json.Unmarshal`.
+**What you'll practise:** The simplest Go file-read and file-write pattern.
 
 **Task:**
-Define a `Person` struct with `json` tags, marshal it to indented JSON, print it, then unmarshal the bytes back into a new variable and verify the round-trip.
+Read a text file into memory, count its lines, modify the content (e.g. uppercase every line), and write the result to a new file. Handle the "file not found" case with a clear error message.
 
 **Steps:**
-1. Define `Person` with fields `Name`, `Age`, and `Email` with `json:"..."` tags
-2. Marshal a `Person` value using `json.MarshalIndent`
-3. Print the JSON string
-4. Unmarshal back into a second `Person` and print both values
+1. Create a sample `input.txt` with 5–10 lines
+2. `data, err := os.ReadFile("input.txt")` — handle `err` with `fmt.Errorf("reading input: %w", err)`
+3. Split on `\n` with `strings.Split`, count non-empty lines
+4. Write the modified content: `os.WriteFile("output.txt", []byte(modified), 0o644)`
 
 ```go
-type Person struct {
-    Name  string `json:"name"`
-    Age   int    `json:"age"`
-    Email string `json:"email"`
-}
-
-p := Person{Name: "Alice", Age: 30, Email: "alice@example.com"}
-data, err := json.MarshalIndent(p, "", "  ")
+data, err := os.ReadFile("input.txt")
 if err != nil {
-    log.Fatal(err)
+    log.Fatalf("reading input: %v", err)
 }
-fmt.Println(string(data))
 
-var p2 Person
-if err := json.Unmarshal(data, &p2); err != nil {
-    log.Fatal(err)
+lines := strings.Split(string(data), "\n")
+fmt.Printf("lines: %d\n", len(lines))
+
+for i, l := range lines {
+    lines[i] = strings.ToUpper(l)
 }
-fmt.Printf("%+v\n", p2)
+
+out := strings.Join(lines, "\n")
+if err := os.WriteFile("output.txt", []byte(out), 0o644); err != nil {
+    log.Fatalf("writing output: %v", err)
+}
+fmt.Println("written output.txt")
 ```
 
 **Expected output:**
 ```
-{
-  "name": "Alice",
-  "age": 30,
-  "email": "alice@example.com"
-}
-{Name:Alice Age:30 Email:alice@example.com}
+lines: 7
+written output.txt
 ```
 
-**Checkpoint:** Both the original and decoded struct print identical field values.
+**Checkpoint:** `output.txt` exists and every line is uppercased compared to `input.txt`.
 
 ---
 
-### Lab 2: JSON Struct Tags — omitempty and Field Renaming
+### Lab 2: bufio.Scanner — Efficient Line-by-Line and Word-by-Word Scanning
 
-**What you'll practise:** Controlling JSON output with `omitempty`, `-`, and custom field names.
-
-**Task:**
-Define a `User` struct that demonstrates three tag behaviours: renamed field, omitted-when-empty field, and never-serialised field. Marshal two instances — one with all fields set, one with empty fields — and compare the output.
-
-**Steps:**
-1. Define `User` with `ID int`, `Name string`, `Email string` (omitempty), and `Password string` (never serialise)
-2. Marshal a fully populated `User` and an empty-email `User`
-3. Observe which fields appear in each output
-
-```go
-type User struct {
-    ID       int    `json:"id"`
-    Name     string `json:"name"`
-    Email    string `json:"email,omitempty"`
-    Password string `json:"-"`
-}
-
-full  := User{ID: 1, Name: "Bob", Email: "bob@example.com", Password: "secret"}
-empty := User{ID: 2, Name: "Carol"}
-
-for _, u := range []User{full, empty} {
-    b, _ := json.MarshalIndent(u, "", "  ")
-    fmt.Println(string(b))
-}
-```
-
-**Expected output:**
-```
-{
-  "id": 1,
-  "name": "Bob",
-  "email": "bob@example.com"
-}
-{
-  "id": 2,
-  "name": "Carol"
-}
-```
-
-**Checkpoint:** `Password` never appears; `email` is absent when empty; no other fields are missing.
-
----
-
-### Lab 3: Streaming JSON with Decoder/Encoder
-
-**What you'll practise:** Decoding a JSON array token-by-token from a `strings.Reader` without loading everything into memory at once.
+**What you'll practise:** Using `bufio.Scanner` with different split functions to count lines and unique words.
 
 **Task:**
-Build a function that reads a JSON array of `Product` objects from a `strings.Reader` using `json.NewDecoder` and streams each decoded product to `os.Stdout` via `json.NewEncoder`.
+Write two functions: `countLines(path string) (int, error)` and `uniqueWords(path string) (map[string]int, error)`. The first uses the default line scanner; the second uses `bufio.ScanWords`. Test both on a large file (generate one programmatically if needed).
 
 **Steps:**
-1. Prepare a multi-item JSON array string
-2. Create a `json.Decoder` around a `strings.NewReader`
-3. Read the opening `[` token, then loop calling `dec.Decode(&p)` until `]`
-4. Encode each decoded product to stdout with `json.NewEncoder`
+1. `scanner := bufio.NewScanner(f)` with default `ScanLines` for line counting
+2. Change to `scanner.Split(bufio.ScanWords)` for word-by-word scanning
+3. Lowercase each word with `strings.ToLower` before counting
+4. Print the top 5 words by frequency
 
 ```go
-const input = `[
-  {"id":1,"name":"Widget","price":9.99},
-  {"id":2,"name":"Gadget","price":24.50},
-  {"id":3,"name":"Doohickey","price":4.75}
-]`
+func uniqueWords(path string) (map[string]int, error) {
+    f, err := os.Open(path)
+    if err != nil { return nil, err }
+    defer f.Close()
 
-type Product struct {
-    ID    int     `json:"id"`
-    Name  string  `json:"name"`
-    Price float64 `json:"price"`
-}
-
-dec := json.NewDecoder(strings.NewReader(input))
-dec.Token() // consume '['
-enc := json.NewEncoder(os.Stdout)
-for dec.More() {
-    var p Product
-    if err := dec.Decode(&p); err != nil {
-        log.Fatal(err)
+    freq := make(map[string]int)
+    scanner := bufio.NewScanner(f)
+    scanner.Split(bufio.ScanWords)
+    for scanner.Scan() {
+        freq[strings.ToLower(scanner.Text())]++
     }
-    enc.Encode(p)
+    return freq, scanner.Err()
 }
 ```
 
 **Expected output:**
 ```
-{"id":1,"name":"Widget","price":9.99}
-{"id":2,"name":"Gadget","price":24.5}
-{"id":3,"name":"Doohickey","price":4.75}
+Lines: 1000
+Top words:
+  the: 142
+  a: 97
+  and: 84
+  to: 71
+  of: 68
 ```
 
-**Checkpoint:** Each line is a single JSON object; the program handles the array without calling `json.Unmarshal` on the whole string.
+**Checkpoint:** `uniqueWords` returns a map with no error, and `scanner.Err()` is `nil` after the loop.
 
 ---
 
-### Lab 4: Custom MarshalJSON / UnmarshalJSON
+### Lab 3: bufio.Writer — Buffered vs Unbuffered Write Performance
 
-**What you'll practise:** Implementing the `json.Marshaler` and `json.Unmarshaler` interfaces to serialise a `Duration` as a human-readable string.
-
-**Task:**
-Define a `Duration` type based on `time.Duration`. Implement `MarshalJSON` so it emits `"1h30m"` and `UnmarshalJSON` so it parses that string back. Embed `Duration` in a struct and round-trip it through JSON.
-
-**Steps:**
-1. Define `type Duration time.Duration`
-2. Implement `MarshalJSON() ([]byte, error)` using `time.Duration.String()`
-3. Implement `UnmarshalJSON(b []byte) error` using `time.ParseDuration`
-4. Embed in a `Task` struct and marshal/unmarshal a value
-
-```go
-type Duration time.Duration
-
-func (d Duration) MarshalJSON() ([]byte, error) {
-    return json.Marshal(time.Duration(d).String())
-}
-
-func (d *Duration) UnmarshalJSON(b []byte) error {
-    var s string
-    if err := json.Unmarshal(b, &s); err != nil {
-        return err
-    }
-    dur, err := time.ParseDuration(s)
-    if err != nil {
-        return err
-    }
-    *d = Duration(dur)
-    return nil
-}
-
-type Task struct {
-    Name    string   `json:"name"`
-    Timeout Duration `json:"timeout"`
-}
-```
-
-**Expected output:**
-```
-{"name":"build","timeout":"1h30m0s"}
-Task: build, Timeout: 1h30m0s
-```
-
-**Checkpoint:** The JSON shows a string like `"1h30m0s"`, not a raw integer nanosecond count.
-
----
-
-### Lab 5: CSV Reading into Typed Structs
-
-**What you'll practise:** Using `encoding/csv` to read raw records and map them into typed structs, including handling quoted fields.
+**What you'll practise:** Measuring the performance difference between buffered and direct file writes.
 
 **Task:**
-Given a CSV string with a header row, use `csv.NewReader` to read all records, skip the header, and convert each row into an `Employee` struct. Handle a field that contains a comma by quoting it in the input.
+Write 10 000 lines to a file using a raw `os.File` (unbuffered), then repeat using `bufio.NewWriter`. Time both approaches and compare. Ensure the buffered writer is always flushed.
 
 **Steps:**
-1. Write a CSV string with header `name,department,salary`; include a row where the department is `"Engineering, Core"` (quoted)
-2. Create a `csv.NewReader` around a `strings.NewReader`
-3. Call `r.Read()` to skip the header, then loop with `r.Read()` for data rows
-4. Parse each row into an `Employee` struct and print all employees
+1. Open a file with `os.Create`, write 10 000 lines directly — time it with `time.Now()` and `time.Since`
+2. Open a second file, wrap with `bufio.NewWriter(f)`, write the same 10 000 lines, call `w.Flush()`
+3. Compare the durations; the buffered version should be 5–50x faster
+4. Add `defer w.Flush()` — verify it's also called on early returns
 
 ```go
-const csvData = `name,department,salary
-Alice,"Engineering, Core",95000
-Bob,Marketing,72000
-Carol,Sales,68000
-`
+// Buffered write
+f, _ := os.Create("buffered.txt")
+w := bufio.NewWriter(f)
+defer w.Flush()
+defer f.Close()
 
-type Employee struct {
-    Name       string
-    Department string
-    Salary     int
-}
-
-r := csv.NewReader(strings.NewReader(csvData))
-r.Read() // skip header
-for {
-    rec, err := r.Read()
-    if err == io.EOF {
-        break
-    }
-    if err != nil {
-        log.Fatal(err)
-    }
-    salary, _ := strconv.Atoi(rec[2])
-    e := Employee{Name: rec[0], Department: rec[1], Salary: salary}
-    fmt.Printf("%+v\n", e)
-}
-```
-
-**Expected output:**
-```
-{Name:Alice Department:Engineering, Core Salary:95000}
-{Name:Bob Department:Marketing Salary:72000}
-{Name:Carol Department:Sales Salary:68000}
-```
-
-**Checkpoint:** The quoted comma-containing department parses correctly as a single field.
-
----
-
-### Lab 6: CSV Writing with a Header Row
-
-**What you'll practise:** Using `csv.NewWriter` to write a header row and data rows, then calling `Flush` and checking for errors.
-
-**Task:**
-Take a slice of `Product` structs and write them to a `strings.Builder` as CSV with a header row. Print the result and verify it looks correct.
-
-**Steps:**
-1. Define a slice of `Product{Name, Price, Stock}`
-2. Create a `csv.NewWriter` around a `strings.Builder`
-3. Write the header row `[]string{"name","price","stock"}`
-4. Loop over products, writing each as a string slice
-5. Call `w.Flush()` and check `w.Error()`
-
-```go
-type Product struct {
-    Name  string
-    Price float64
-    Stock int
-}
-
-products := []Product{
-    {"Widget", 9.99, 100},
-    {"Gadget", 24.50, 45},
-    {"Doohickey", 4.75, 200},
-}
-
-var sb strings.Builder
-w := csv.NewWriter(&sb)
-w.Write([]string{"name", "price", "stock"})
-for _, p := range products {
-    w.Write([]string{p.Name, strconv.FormatFloat(p.Price, 'f', 2, 64), strconv.Itoa(p.Stock)})
+start := time.Now()
+for i := 0; i < 10_000; i++ {
+    fmt.Fprintf(w, "line %d: the quick brown fox\n", i)
 }
 w.Flush()
-if err := w.Error(); err != nil {
-    log.Fatal(err)
-}
-fmt.Print(sb.String())
+fmt.Println("buffered:", time.Since(start))
 ```
 
 **Expected output:**
 ```
-name,price,stock
-Widget,9.99,100
-Gadget,24.50,45
-Doohickey,4.75,200
+unbuffered: 45.2ms
+buffered:   1.3ms
 ```
 
-**Checkpoint:** Output matches the expected CSV with the header row first and no trailing comma.
+**Checkpoint:** The buffered write is measurably faster, and the output file contains exactly 10 000 lines.
 
 ---
 
-### Lab 7: JSON-to-CSV Converter
+### Lab 4: io.Copy — File Copy and Custom Copy Loop
 
-**What you'll practise:** Reading the same data in JSON format and writing it out as CSV — bridging the two encodings.
+**What you'll practise:** Using `io.Copy` for efficient streaming, then implementing a manual copy loop for comparison.
 
 **Task:**
-Write a function `convertJSONToCSV(jsonInput string, w io.Writer) error` that decodes a JSON array of `Record{Name, Value string}` objects and writes them as CSV (with header) to the provided writer.
+Copy a file two ways: first using `io.Copy(dst, src)`, then using a manual `buf := make([]byte, 32*1024)` loop calling `src.Read` and `dst.Write`. Verify both produce identical output files.
 
 **Steps:**
-1. Define `Record{Name, Value string}` with JSON tags
-2. Unmarshal the input JSON array into `[]Record`
-3. Create a `csv.NewWriter` around the provided `io.Writer`
-4. Write header `["name","value"]` then one row per record
-5. Flush and return any error
+1. `io.Copy` copy: open src, create dst, call `n, err := io.Copy(dst, src)`, print bytes copied
+2. Manual loop: use `io.ReadFull` or `src.Read` into a 32 KB buffer, write each chunk to dst
+3. Compare the two output files with `bytes.Equal(file1content, file2content)`
+4. Note that `io.Copy` uses the same 32 KB buffer internally
 
 ```go
-const jsonInput = `[
-  {"name":"alpha","value":"1"},
-  {"name":"beta","value":"2"},
-  {"name":"gamma","value":"3"}
-]`
+// io.Copy version
+src, _ := os.Open("input.txt")
+dst, _ := os.Create("copy1.txt")
+n, err := io.Copy(dst, src)
+fmt.Printf("copied %d bytes, err: %v\n", n, err)
+src.Close(); dst.Close()
 
-func convertJSONToCSV(jsonInput string, w io.Writer) error {
-    var records []struct {
-        Name  string `json:"name"`
-        Value string `json:"value"`
-    }
-    if err := json.Unmarshal([]byte(jsonInput), &records); err != nil {
-        return err
-    }
-    cw := csv.NewWriter(w)
-    cw.Write([]string{"name", "value"})
-    for _, r := range records {
-        cw.Write([]string{r.Name, r.Value})
-    }
-    cw.Flush()
-    return cw.Error()
+// Manual version
+src, _ = os.Open("input.txt")
+dst, _ = os.Create("copy2.txt")
+buf := make([]byte, 32*1024)
+for {
+    nr, er := src.Read(buf)
+    if nr > 0 { dst.Write(buf[:nr]) }
+    if er == io.EOF { break }
+    if er != nil { log.Fatal(er) }
 }
+src.Close(); dst.Close()
 ```
 
 **Expected output:**
 ```
-name,value
-alpha,1
-beta,2
-gamma,3
+copied 4096 bytes, err: <nil>
+copy1.txt and copy2.txt are identical: true
 ```
 
-**Checkpoint:** Running `convertJSONToCSV(jsonInput, os.Stdout)` produces valid CSV with the correct header.
+**Checkpoint:** Both output files exist and are byte-for-byte identical.
 
 ---
 
-### Final Lab: Config Manager
+### Lab 5: os.File Seek — Positional Reads
 
-**What you'll practise:** Combining JSON encode/decode, custom marshaling, and CSV export in a single program.
+**What you'll practise:** Using `Seek` and `ReadAt` for random-access reads on a file.
 
 **Task:**
-Build a config manager that loads from a JSON file, merges environment variable overrides, saves the merged config back to JSON with indentation, and exports it as CSV. Use a `LogLevel` type with custom `MarshalJSON`/`UnmarshalJSON` that maps between `"debug"/"info"/"warn"/"error"` strings and integer constants.
+Open a binary or text file. Seek to byte offset 100, read 50 bytes, print them. Then seek back to the start and confirm the position. Use `ReadAt` for a positional read without changing the file cursor.
 
 **Steps:**
-1. Define `Config{Host string, Port int, DatabaseURL string, LogLevel LogLevel, Features map[string]bool}`
-2. Implement `LogLevel.MarshalJSON` (emit string) and `UnmarshalJSON` (parse string to int)
-3. Load from `config.json` with `json.NewDecoder`; merge `os.Getenv` overrides
-4. Save merged config with `json.MarshalIndent` to `config.out.json`
-5. Export all fields as a two-column CSV (`key,value`) using `csv.NewWriter`
+1. `f, err := os.Open("somefile.txt")`
+2. `f.Seek(100, io.SeekStart)` — seek to offset 100 from the beginning
+3. `io.ReadFull(f, buf)` — read 50 bytes
+4. `f.Seek(0, io.SeekStart)` — seek back to start, verify with `f.Seek(0, io.SeekCurrent)` returns 0
+5. `f.ReadAt(buf, 100)` — positional read without changing cursor, verify cursor didn't move
 
 ```go
-type LogLevel int
+f, _ := os.Open("input.txt")
+defer f.Close()
 
-const (
-    LogDebug LogLevel = iota
-    LogInfo
-    LogWarn
-    LogError
-)
+f.Seek(100, io.SeekStart)
+buf := make([]byte, 50)
+n, _ := io.ReadFull(f, buf)
+fmt.Printf("bytes 100-149: %q\n", buf[:n])
 
-func (l LogLevel) MarshalJSON() ([]byte, error) {
-    names := []string{"debug", "info", "warn", "error"}
-    if int(l) >= len(names) {
-        return nil, fmt.Errorf("unknown log level: %d", l)
-    }
-    return json.Marshal(names[l])
-}
+pos, _ := f.Seek(0, io.SeekStart)
+fmt.Println("cursor reset to:", pos)
 
-func (l *LogLevel) UnmarshalJSON(b []byte) error {
-    var s string
-    if err := json.Unmarshal(b, &s); err != nil {
-        return err
+n2, _ := f.ReadAt(buf, 100)
+fmt.Printf("ReadAt bytes 100-149: %q\n", buf[:n2])
+cur, _ := f.Seek(0, io.SeekCurrent)
+fmt.Println("cursor after ReadAt:", cur) // still 0
+```
+
+**Expected output:**
+```
+bytes 100-149: "...50 chars from offset 100..."
+cursor reset to: 0
+ReadAt bytes 100-149: "...same 50 chars..."
+cursor after ReadAt: 0
+```
+
+**Checkpoint:** Both reads return the same bytes. `ReadAt` does not move the file cursor.
+
+---
+
+### Lab 6: filepath.WalkDir — Collect .go Files
+
+**What you'll practise:** Walking a directory tree and filtering entries by extension.
+
+**Task:**
+Walk the `zero2hero-golang` root directory (or any directory). Collect all `.go` files, print their relative paths and sizes, and print a summary total. Skip `vendor` and hidden directories.
+
+**Steps:**
+1. `filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error { ... })`
+2. Skip `d.IsDir()` entries and entries where `filepath.Ext(path) != ".go"`
+3. Call `d.Info()` to get `fs.FileInfo`, read `fi.Size()`
+4. Accumulate total size, print a summary line at the end
+
+```go
+var totalBytes int64
+var count int
+
+err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+    if err != nil { return err }
+    if d.IsDir() && (d.Name() == "vendor" || strings.HasPrefix(d.Name(), ".")) {
+        return filepath.SkipDir
     }
-    names := map[string]LogLevel{"debug": LogDebug, "info": LogInfo, "warn": LogWarn, "error": LogError}
-    v, ok := names[s]
-    if !ok {
-        return fmt.Errorf("unknown log level: %q", s)
-    }
-    *l = v
+    if filepath.Ext(path) != ".go" { return nil }
+    fi, _ := d.Info()
+    totalBytes += fi.Size()
+    count++
+    fmt.Printf("%-50s %7d bytes\n", path, fi.Size())
     return nil
+})
+
+fmt.Printf("\n%d .go files, %d bytes total\n", count, totalBytes)
+```
+
+**Expected output:**
+```
+day-01/main.go                                          42 bytes
+day-02/main.go                                         128 bytes
+...
+34 .go files, 48291 bytes total
+```
+
+**Checkpoint:** The count and total match what `find . -name "*.go"` would return.
+
+---
+
+### Lab 7: Temporary Files — Safe Temp File Pattern
+
+**What you'll practise:** Creating, writing, reading, and cleaning up temporary files safely.
+
+**Task:**
+Create a temporary file using `os.CreateTemp`, write structured data (e.g. JSON) to it, close it, re-open it to read back, then delete it with `defer os.Remove`. Verify the file is gone after the function returns.
+
+**Steps:**
+1. `f, err := os.CreateTemp("", "day18-*.json")` — create in the default temp dir
+2. Write JSON using `json.NewEncoder(f).Encode(data)`
+3. `f.Close()` — close before re-opening for reading
+4. Re-open with `os.Open(f.Name())`, decode with `json.NewDecoder`
+5. `defer os.Remove(f.Name())` at the top ensures cleanup even on error
+
+```go
+type Record struct{ Name string; Value int }
+
+f, err := os.CreateTemp("", "day18-*.json")
+if err != nil { log.Fatal(err) }
+defer os.Remove(f.Name())
+defer f.Close()
+
+enc := json.NewEncoder(f)
+enc.Encode(Record{"answer", 42})
+f.Close()
+
+f2, _ := os.Open(f.Name())
+defer f2.Close()
+var r Record
+json.NewDecoder(f2).Decode(&r)
+fmt.Printf("read back: %+v\n", r)
+fmt.Printf("temp path: %s\n", f.Name())
+```
+
+**Expected output:**
+```
+read back: {Name:answer Value:42}
+temp path: /tmp/day18-1234567890.json
+```
+
+**Checkpoint:** After the function returns, `os.Stat(f.Name())` returns an error (`os.IsNotExist`).
+
+---
+
+### Final Lab (Project): .ini Config File Reader/Writer
+
+**What you'll practise:** Combining `bufio.Scanner`, `strings.Cut`, `os.ReadFile`, `io.Writer`, and structured error handling to build a complete file parser.
+
+**Task:**
+Write a program that reads a `.ini`-style config file and writes it back in the same format.
+
+**Steps:**
+1. Parse the file into `map[string]map[string]string` (section → key → value)
+2. Handle blank lines (skip), comment lines (`#` prefix, skip), section headers (`[section]`), and key-value pairs (`key = value`)
+3. Return a custom `ParseError` with line number for malformed lines
+4. Implement `Write(w io.Writer, cfg map[string]map[string]string) error` that outputs the canonical format
+5. Round-trip: parse → write to `bytes.Buffer` → parse again → assert equal
+
+```go
+type ParseError struct {
+    Line int
+    Text string
+}
+
+func (e *ParseError) Error() string {
+    return fmt.Sprintf("line %d: malformed: %q", e.Line, e.Text)
+}
+
+func Parse(r io.Reader) (map[string]map[string]string, error) {
+    cfg := make(map[string]map[string]string)
+    var section string
+    scanner := bufio.NewScanner(r)
+    for i := 1; scanner.Scan(); i++ {
+        line := strings.TrimSpace(scanner.Text())
+        switch {
+        case line == "" || strings.HasPrefix(line, "#"):
+            // skip
+        case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
+            section = line[1 : len(line)-1]
+            cfg[section] = make(map[string]string)
+        default:
+            k, v, ok := strings.Cut(line, "=")
+            if !ok { return nil, &ParseError{i, line} }
+            cfg[section][strings.TrimSpace(k)] = strings.TrimSpace(v)
+        }
+    }
+    return cfg, scanner.Err()
 }
 ```
 
 **Expected output:**
 ```
-config loaded: {Host:localhost Port:5432 LogLevel:1}
-saved to config.out.json
-CSV:
-key,value
-host,localhost
-port,5432
-log_level,info
+Parsed sections: [database server]
+database.host = localhost
+database.port = 5432
+server.port = 8080
+Round-trip equal: true
 ```
 
-**Checkpoint:** `config.out.json` contains human-readable indented JSON with `"log_level":"info"` (not an integer); the CSV has the correct header and one row per field.
+**Checkpoint:** The round-tripped config equals the original parsed config. A file with a malformed line returns a `*ParseError` with the correct line number.
 
 ---
 
-## Day Project: Config Manager
+## Day Project: Config File Reader
 
-Build a config manager that:
-1. Defines a `Config` struct (server host/port, database URL, log level, feature flags)
-2. Loads config from JSON file with `json.NewDecoder`
-3. Merges environment variable overrides (`os.Getenv`)
-4. Saves the merged config back to JSON with indentation
-5. Exports the config as CSV with headers
+Write a program that reads a simple `.ini`-style config file:
 
-Use custom `MarshalJSON`/`UnmarshalJSON` for a `LogLevel` type (`"debug"` ↔ integer).
+```ini
+[database]
+host = localhost
+port = 5432
+name = mydb
 
-**Extension ideas:** support YAML via `gopkg.in/yaml.v3`; add JSON schema validation.
+[server]
+port = 8080
+debug = true
+```
+
+Parse it into a `map[string]map[string]string` (section → key → value). Handle:
+- Blank lines and comments (`#` prefix)
+- Missing file (return a useful error)
+- Malformed lines (wrap and return a `ParseError`)
+
+Write the parsed config back to a writer in the same format.
+
+**Extension ideas:** support `${ENV_VAR}` substitution in values using `os.Getenv`; watch the file with a goroutine and reload on change.
 
 ## Official Documentation
 
-- [`encoding/json`](https://pkg.go.dev/encoding/json) — `Marshal`, `Unmarshal`, `NewEncoder`, `NewDecoder`, `RawMessage`, struct tags (`json:"..."`)
-- [`encoding/csv`](https://pkg.go.dev/encoding/csv) — `NewReader`, `NewWriter`, `Reader.ReadAll`, `Writer.Flush`
-- [`os`](https://pkg.go.dev/os) — `Getenv` for environment variable overrides
-- [`io`](https://pkg.go.dev/io) — `EOF`, `Reader` used with streaming decoders
-- [`strings`](https://pkg.go.dev/strings) — `NewReader` used in CSV examples
-- [`time`](https://pkg.go.dev/time) — `Time`, `Duration` used in struct fields and custom marshaling
-- [Go Blog: JSON and Go](https://go.dev/blog/json) — struct tags, streaming, custom marshaling walkthrough
-- [Language Spec — Struct tags](https://go.dev/ref/spec#Struct_types)
+- [`os`](https://pkg.go.dev/os) — `ReadFile`, `WriteFile`, `Create`, `Open`, `CreateTemp`, `Remove`
+- [`io`](https://pkg.go.dev/io) — `Reader`, `Writer`, `Copy`, `ReadAll`, `MultiReader`, `TeeReader`, `LimitReader`, `Pipe`, `Discard`
+- [`bufio`](https://pkg.go.dev/bufio) — `NewScanner`, `NewWriter`, `Scanner.Scan`, `Writer.Flush`
+- [`path/filepath`](https://pkg.go.dev/path/filepath) — `WalkDir`
+- [`io/fs`](https://pkg.go.dev/io/fs) — `DirEntry`, `FS` interface used by `filepath.WalkDir`
+- [Language Spec — Interfaces](https://go.dev/ref/spec#Interface_types) — `io.Reader` / `io.Writer` interface mechanics
+- [Effective Go — I/O](https://go.dev/doc/effective_go#interfaces_and_types)

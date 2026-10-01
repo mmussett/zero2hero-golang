@@ -1,379 +1,581 @@
-# Day 08: Interfaces
+# Day 08: Idiomatic Go Project Structure
 
-## Core Concept: Implicit Satisfaction
+## Core Concept: Start Flat, Grow Deliberately
 
-In Go, a type satisfies an interface simply by implementing all its methods — no `implements` keyword, no explicit declaration. This is called **duck typing** or **structural typing**.
+Go has no mandatory project layout. The language team has explicitly declined to prescribe one. But idiomatic Go projects share patterns distilled from years of open-source Go code.
+
+> "The most important thing is that the code works, is readable, and can be maintained." — Go team
+
+---
+
+## Part 1: The Flat Package (Start Here)
+
+For small projects and CLIs — one or a few packages, everything at the root:
+
+```
+myapp/
+├── go.mod
+├── go.sum
+├── main.go
+├── handler.go
+├── store.go
+├── store_test.go
+├── config.go
+└── README.md
+```
+
+**When to use:** scripts, small tools, single-binary apps with < 5 source files. No subdirectories until a clear seam emerges. Resist premature structure.
+
+---
+
+## Part 2: Multiple Binaries with `cmd/`
+
+When your module produces more than one binary:
+
+```
+myproject/
+├── go.mod
+├── cmd/
+│   ├── api/
+│   │   └── main.go        ← package main (the API server)
+│   ├── worker/
+│   │   └── main.go        ← package main (background worker)
+│   └── migrate/
+│       └── main.go        ← package main (DB migration tool)
+├── internal/
+│   ├── store/
+│   │   ├── store.go
+│   │   └── store_test.go
+│   └── config/
+│       └── config.go
+└── README.md
+```
+
+Each directory under `cmd/` has its own `package main`. All shared logic lives elsewhere — `cmd/` contains only `main.go` (wiring, flags, startup).
+
+```bash
+go build ./cmd/api
+go build ./cmd/worker
+go install ./cmd/...     # install all binaries
+```
+
+---
+
+## Part 3: `internal/` — Enforced Encapsulation
+
+`internal/` is a Go compiler-enforced boundary. Only code in the **parent** of `internal/` can import it.
+
+```
+myproject/
+├── internal/
+│   ├── store/        ← importable only by myproject/...
+│   ├── auth/
+│   └── metrics/
+├── cmd/api/
+└── pkg/             ← importable by anyone (if you publish it)
+```
+
+Use `internal/` for:
+- Implementation details you don't want to promise are stable
+- Packages shared across your `cmd/` binaries but not meant for external use
+- Database models, service layer, business logic
+
+---
+
+## Part 4: The `pkg/` Directory
+
+`pkg/` signals "this is a public library" — it is importable by external modules. It is optional and slightly controversial:
+
+```
+myproject/
+├── pkg/
+│   ├── retry/        ← stable, public API
+│   └── httputil/     ← stable, public API
+└── internal/
+    └── auth/         ← private implementation
+```
+
+**Skip `pkg/` if you are not publishing a library.** Many Go projects use `internal/` for everything and have no `pkg/`.
+
+---
+
+## Part 5: Domain-Driven Layout (for Larger Services)
+
+Organise by **domain concept**, not by layer:
+
+```
+notes-api/
+├── go.mod
+├── cmd/
+│   └── api/
+│       └── main.go
+├── internal/
+│   ├── note/           ← "note" domain
+│   │   ├── note.go         ← types: Note, NoteID
+│   │   ├── service.go      ← business logic
+│   │   ├── service_test.go
+│   │   ├── store.go        ← Store interface
+│   │   └── handler.go      ← HTTP handlers
+│   ├── user/           ← "user" domain
+│   │   ├── user.go
+│   │   └── ...
+│   └── platform/       ← cross-cutting concerns
+│       ├── database/
+│       │   └── database.go
+│       ├── logger/
+│       │   └── logger.go
+│       └── config/
+│           └── config.go
+└── README.md
+```
+
+**Why by domain, not by layer?**
+
+Layer-based layout (`controllers/`, `models/`, `repositories/`) scatters one feature across many directories. Domain-based layout keeps all code for a concept together — easy to delete, move, or extract a service.
+
+---
+
+## Part 6: What NOT to Do
+
+### Anti-Pattern: `util/` or `helpers/`
+
+```
+// Bad — this package will accumulate everything with no coherent purpose
+internal/util/util.go
+internal/helpers/string_helpers.go
+```
+
+If a function is general enough to live in `util`, it belongs in a specifically named package (`stringutil`, `timeutil`) or in the nearest calling package.
+
+### Anti-Pattern: Circular Imports
+
+Go does not allow circular imports. If `packageA` imports `packageB` and `packageB` imports `packageA`, it will not compile. Circular imports are a sign of poor package decomposition.
+
+Fix: extract shared types into a third package, or merge the packages.
+
+### Anti-Pattern: One Package Per File
+
+```
+// Bad — splitting trivially by file, not by responsibility
+internal/note_model/note.go
+internal/note_service/service.go
+internal/note_handler/handler.go
+```
+
+Group by **concept**, not by file type. `internal/note/` should contain the model, service, and handler for notes.
+
+### Anti-Pattern: `github.com/golang-standards/project-layout`
+
+This widely-cited repository is **not official**. The Go team does not endorse it. Following it blindly adds directories like `deployments/`, `scripts/`, `build/` before you need them. Start with what you have; add structure when the pain demands it.
+
+---
+
+## Part 7: Configuration and Wiring in `main`
+
+`main.go` should be the **only** place where the app is wired together — reading config, creating dependencies, connecting layers. It should not contain business logic.
 
 ```go
-type Shape interface {
-    Area() float64
-    Perimeter() float64
+// cmd/api/main.go
+func main() {
+    cfg := config.Load()               // read env/file
+    db  := database.Open(cfg.DSN)      // create DB
+    defer db.Close()
+
+    noteStore   := note.NewSQLStore(db)
+    noteService := note.NewService(noteStore)
+    noteHandler := note.NewHandler(noteService)
+
+    r := chi.NewRouter()
+    r.Mount("/api/notes", noteHandler.Routes())
+
+    srv := &http.Server{Addr: cfg.Addr, Handler: r}
+    log.Fatal(srv.ListenAndServe())
 }
-
-type Circle struct{ Radius float64 }
-func (c Circle) Area() float64      { return math.Pi * c.Radius * c.Radius }
-func (c Circle) Perimeter() float64 { return 2 * math.Pi * c.Radius }
-
-// Circle satisfies Shape automatically
-var s Shape = Circle{Radius: 5}
-fmt.Printf("Area: %.2f\n", s.Area())
 ```
 
-## Interface Composition
+Each constructor takes its dependencies as arguments — dependency injection without a framework.
 
-Interfaces can embed other interfaces:
+---
 
-```go
-type ReadWriter interface {
-    io.Reader
-    io.Writer
-}
+## Part 8: File Naming Conventions
+
+| File | Contents |
+|------|----------|
+| `type.go` or `note.go` | Core types for the package |
+| `store.go` | `Store` interface + implementations |
+| `service.go` | Business logic |
+| `handler.go` | HTTP handlers |
+| `middleware.go` | HTTP middleware |
+| `config.go` | Configuration types |
+| `*_test.go` | Tests (same or separate package) |
+
+There is no `interface.go` or `model.go` convention — put types in the file that most directly relates to them.
+
+---
+
+## Part 9: Testing Layout
+
+```
+internal/note/
+├── note.go
+├── service.go
+├── service_test.go    ← package note (white-box: can access unexported symbols)
+├── store.go
+└── store_integration_test.go  ← package note_test (black-box)
 ```
 
-## The Empty Interface: `any`
+Use `package foo_test` (external test package) for integration tests that should only use the public API. Use `package foo` for unit tests that need unexported symbols.
 
-`any` (alias for `interface{}`) accepts a value of any type. Use it sparingly — it bypasses type safety.
+---
 
-```go
-func Print(v any) { fmt.Printf("%v (%T)\n", v, v) }
+## Part 10: A Real-World Reference Layout
+
+The notes API from Days 22–25, restructured idiomatically:
+
+```
+notes-api/
+├── go.mod
+├── go.sum
+├── Dockerfile
+├── .goreleaser.yaml
+├── README.md
+├── cmd/
+│   └── api/
+│       └── main.go          ← wiring only
+├── internal/
+│   ├── note/
+│   │   ├── note.go          ← Note type, NoteID
+│   │   ├── store.go         ← Store interface
+│   │   ├── sqlstore.go      ← *SQLStore implements Store
+│   │   ├── service.go       ← business logic
+│   │   ├── handler.go       ← HTTP handlers
+│   │   └── handler_test.go
+│   └── platform/
+│       ├── config/
+│       │   └── config.go
+│       ├── database/
+│       │   └── database.go
+│       └── logger/
+│           └── logger.go
+└── migrations/
+    └── 001_create_notes.sql
 ```
 
-## Type Assertions
+---
 
-Extract the underlying concrete type from an interface:
-
-```go
-var s Shape = Circle{Radius: 3}
-
-c, ok := s.(Circle)     // safe — ok is false if wrong type
-if ok { fmt.Println(c.Radius) }
-
-c2 := s.(Circle)        // panics if s is not a Circle
-```
-
-## Type Switches
-
-Dispatch on multiple concrete types:
-
-```go
-func describe(s Shape) string {
-    switch v := s.(type) {
-    case Circle:    return fmt.Sprintf("Circle r=%.1f", v.Radius)
-    case Rectangle: return fmt.Sprintf("Rect %gx%g", v.Width, v.Height)
-    default:        return "unknown shape"
-    }
-}
-```
-
-## Common Standard-Library Interfaces
-
-| Interface | Methods | Use |
-|-----------|---------|-----|
-| [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer) | `String() string` | Custom `fmt.Println` output |
-| `error` | `Error() string` | Error values |
-| [`io.Reader`](https://pkg.go.dev/io#Reader) | `Read([]byte) (int, error)` | Anything readable |
-| [`io.Writer`](https://pkg.go.dev/io#Writer) | `Write([]byte) (int, error)` | Anything writable |
-| [`sort.Interface`](https://pkg.go.dev/sort#Interface) | `Len`, `Less`, `Swap` | Custom sort |
+---
 
 ## Labs
 
-### Lab 1: Define `Shape` and Three Concrete Types
+### Lab 1: Flat Structure
 
-**What you'll practise:** declaring an interface and satisfying it implicitly with multiple concrete types.
-
-**Task:**
-Define a `Shape` interface with `Area() float64` and `Perimeter() float64`. Implement `Circle`, `Rectangle`, and `Triangle` structs that satisfy it, plus `fmt.Stringer` on each.
-
-**Steps:**
-1. Declare `type Shape interface { Area() float64; Perimeter() float64 }`
-2. Define `Circle{Radius float64}`, `Rectangle{Width, Height float64}`, `Triangle{A, B, C float64}` (sides)
-3. Implement `Area()` and `Perimeter()` for each — use `math.Pi` and Heron's formula for Triangle
-4. Implement `String() string` on each so `fmt.Println` produces a readable description
-5. In `main`, assign each to a `Shape` variable and print `Area()` and `Perimeter()`
-
-```go
-import "math"
-
-type Shape interface {
-    Area() float64
-    Perimeter() float64
-}
-
-type Circle struct{ Radius float64 }
-
-func (c Circle) Area() float64      { return math.Pi * c.Radius * c.Radius }
-func (c Circle) Perimeter() float64 { return 2 * math.Pi * c.Radius }
-func (c Circle) String() string     { return fmt.Sprintf("Circle(r=%.2f)", c.Radius) }
-
-type Rectangle struct{ Width, Height float64 }
-
-func (r Rectangle) Area() float64      { return r.Width * r.Height }
-func (r Rectangle) Perimeter() float64 { return 2 * (r.Width + r.Height) }
-func (r Rectangle) String() string     { return fmt.Sprintf("Rect(%.2fx%.2f)", r.Width, r.Height) }
-```
-
-**Expected output:**
-```
-Circle(r=5.00)  area=78.54  perimeter=31.42
-Rect(3.00x4.00) area=12.00  perimeter=14.00
-```
-
-**Checkpoint:** All three types compile; assigning any of them to a `Shape` variable works without a cast.
-
----
-
-### Lab 2: `TotalArea` and `LargestShape`
-
-**What you'll practise:** writing functions that accept interface slices, demonstrating runtime polymorphism.
+**What you'll practise:** Building a small web server entirely in `package main` to feel the limits of flat structure firsthand.
 
 **Task:**
-Write `TotalArea(shapes []Shape) float64` and `LargestShape(shapes []Shape) Shape` using only the `Shape` interface — no type assertions.
+Create a minimal notes server with handler, in-memory store, and server wiring — all in `main.go`. No subdirectories.
 
 **Steps:**
-1. Implement `TotalArea` by ranging over the slice and summing `s.Area()`
-2. Implement `LargestShape` by tracking the shape with the maximum area; return `nil` for an empty slice
-3. Create a mixed `[]Shape{Circle{5}, Rectangle{3,4}, Triangle{3,4,5}}` in main
-4. Print the total area and the string representation of the largest shape
+1. In `day-32/`, add to `main.go` with `package main`
+2. Define a `Note` struct with `ID int`, `Title string`, `Body string`
+3. Create a `MemStore` struct with a `[]Note` field and a `sync.Mutex`
+4. Add `Add(n Note) Note`, `All() []Note`, and `FindByID(id int) (Note, bool)` methods
+5. Add two HTTP handlers: `GET /notes` (list all) and `POST /notes` (create); wire in `main()`
 
 ```go
-func TotalArea(shapes []Shape) float64 {
-    total := 0.0
-    for _, s := range shapes {
-        total += s.Area()
-    }
-    return total
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "sync"
+)
+
+type Note struct {
+    ID    int    `json:"id"`
+    Title string `json:"title"`
+    Body  string `json:"body"`
 }
 
-func LargestShape(shapes []Shape) Shape {
-    if len(shapes) == 0 {
-        return nil
-    }
-    best := shapes[0]
-    for _, s := range shapes[1:] {
-        if s.Area() > best.Area() {
-            best = s
-        }
-    }
-    return best
+type MemStore struct {
+    mu    sync.Mutex
+    notes []Note
+    next  int
 }
 ```
 
 **Expected output:**
 ```
-Total area: 96.54
-Largest: Circle(r=5.00)
+Server listening on :8080
+# curl localhost:8080/notes            → []
+# curl -XPOST localhost:8080/notes \
+#   -d '{"title":"hello"}'            → {"id":1,"title":"hello","body":""}
+# curl localhost:8080/notes            → [{"id":1,...}]
 ```
 
-**Checkpoint:** `LargestShape` returns the correct shape for any ordering of the input slice.
+**Checkpoint:** Count the lines. Once the file exceeds ~150–200 lines, navigation becomes painful. That is the natural inflection point for introducing structure — not before.
 
 ---
 
-### Lab 3: Type Assertions — Extract Only Circles
+### Lab 2: The `cmd/` Pattern
 
-**What you'll practise:** the comma-ok form of type assertions to safely extract concrete types from an interface slice.
-
-**Task:**
-Given a `[]Shape` containing mixed types, use type assertion to collect only the `Circle` values into a `[]Circle`. Handle the non-circle case gracefully.
-
-**Steps:**
-1. Create `shapes := []Shape{Circle{1}, Rectangle{2,3}, Circle{5}, Triangle{3,4,5}}`
-2. Iterate and attempt `c, ok := s.(Circle)` — collect only when `ok` is true
-3. Print each extracted circle's radius
-4. Also demonstrate the panicking form `s.(Circle)` on a known Circle, then show what happens with the wrong type using a recover
-
-```go
-func extractCircles(shapes []Shape) []Circle {
-    var circles []Circle
-    for _, s := range shapes {
-        if c, ok := s.(Circle); ok {
-            circles = append(circles, c)
-        }
-    }
-    return circles
-}
-```
-
-**Expected output:**
-```
-Circles: [Circle(r=1.00) Circle(r=5.00)]
-Non-circles skipped: 2
-```
-
-**Checkpoint:** The function never panics regardless of the input slice composition.
-
----
-
-### Lab 4: Type Switch — `describe`
-
-**What you'll practise:** type switches for dispatching on concrete types without explicit if-chains.
+**What you'll practise:** Moving `main()` to `cmd/notes/main.go` so the root package becomes a reusable library.
 
 **Task:**
-Write `describe(s Shape) string` that returns a human-readable sentence about the shape using a type switch.
+Refactor the flat server from Lab 1. Move only the wiring to `cmd/notes/main.go`. Keep `Note`, `MemStore`, and handler registration in the root package (renamed from `main` to a library package).
 
 **Steps:**
-1. Implement `describe` with `switch v := s.(type)`
-2. Handle `Circle`, `Rectangle`, `Triangle` with shape-specific sentences
-3. Add a `default` case returning "unknown shape"
-4. Test with all three types and an unknown type wrapped in an interface
+1. Rename the root package from `package main` to `package notes` in all non-main files
+2. Create `day-32/cmd/notes/main.go` with `package main`
+3. Move `main()` and only the startup/wiring code there
+4. Import the root library package from `cmd/notes/main.go`
+5. Build: `go build ./cmd/notes`
 
 ```go
-func describe(s Shape) string {
-    switch v := s.(type) {
-    case Circle:
-        return fmt.Sprintf("a circle with radius %.2f and area %.2f", v.Radius, v.Area())
-    case Rectangle:
-        return fmt.Sprintf("a %.2f by %.2f rectangle", v.Width, v.Height)
-    case Triangle:
-        return fmt.Sprintf("a triangle with sides %.2f, %.2f, %.2f", v.A, v.B, v.C)
-    default:
-        return fmt.Sprintf("unknown shape: %T", v)
-    }
-}
-```
+// cmd/notes/main.go
+package main
 
-**Expected output:**
-```
-a circle with radius 5.00 and area 78.54
-a 3.00 by 4.00 rectangle
-a triangle with sides 3.00, 4.00, 5.00
-```
-
-**Checkpoint:** `describe` handles all three types and the default case without any type assertions outside the switch.
-
----
-
-### Lab 5: Interface Composition — `LabelledShape`
-
-**What you'll practise:** embedding interfaces to compose richer interface types.
-
-**Task:**
-Define a `Stringer` interface (`String() string`), a `Sizer` interface (`Size() float64`), and a composed `LabelledShape` interface that embeds both plus `Shape`. Then write a function that accepts only `LabelledShape`.
-
-**Steps:**
-1. Define `type Stringer interface { String() string }` and `type Sizer interface { Size() float64 }`
-2. Define `type LabelledShape interface { Shape; Stringer; Sizer }`
-3. Add `Size() float64` to `Circle` (returning diameter) and `Rectangle` (returning diagonal)
-4. Write `PrintLabelled(ls LabelledShape)` that prints the label, size, area, and perimeter
-5. Observe that `Triangle` does not implement `LabelledShape` (compile error if you try)
-
-```go
-type Stringer interface{ String() string }
-type Sizer   interface{ Size() float64 }
-
-type LabelledShape interface {
-    Shape
-    Stringer
-    Sizer
-}
-
-func PrintLabelled(ls LabelledShape) {
-    fmt.Printf("%s  size=%.2f  area=%.2f  perim=%.2f\n",
-        ls.String(), ls.Size(), ls.Area(), ls.Perimeter())
-}
-```
-
-**Expected output:**
-```
-Circle(r=5.00)  size=10.00  area=78.54  perim=31.42
-Rect(3.00x4.00) size=5.00   area=12.00  perim=14.00
-```
-
-**Checkpoint:** `PrintLabelled` compiles only when called with a type that satisfies all three embedded interfaces.
-
----
-
-### Lab 6: The Empty Interface — `PrintAll`
-
-**What you'll practise:** using `any` to accept heterogeneous values, and understanding why `any` loses type safety.
-
-**Task:**
-Write `PrintAll(values []any)` that prints each value using `fmt.Sprint`. Then demonstrate the loss of type safety by mixing shapes, integers, and strings in the same slice.
-
-**Steps:**
-1. Implement `PrintAll` using a range loop and `fmt.Sprintf("%v (%T)", v, v)`
-2. Call it with `[]any{Circle{3}, 42, "hello", true}`
-3. Try calling `.Area()` on an element extracted from the `[]any` — observe the compile error (you must assert first)
-4. Discuss in a comment why `[]Shape` is safer than `[]any` for shape collections
-
-```go
-func PrintAll(values []any) {
-    for _, v := range values {
-        fmt.Printf("%v  (type: %T)\n", v, v)
-    }
-}
+import (
+    notes "day32"
+    "net/http"
+)
 
 func main() {
-    PrintAll([]any{Circle{Radius: 3}, 42, "hello", true})
-
-    // To call .Area() you must assert — any loses the interface:
-    var v any = Circle{Radius: 3}
-    if s, ok := v.(Shape); ok {
-        fmt.Println("area:", s.Area())
-    }
+    store := notes.NewMemStore()
+    mux := http.NewServeMux()
+    notes.RegisterHandlers(mux, store)
+    http.ListenAndServe(":8080", mux)
 }
 ```
 
 **Expected output:**
 ```
-Circle(r=3.00)  (type: main.Circle)
-42  (type: int)
-hello  (type: string)
-true  (type: bool)
-area: 28.27
+go build ./cmd/notes  ← succeeds, produces a binary
+./notes               ← server starts on :8080
 ```
 
-**Checkpoint:** You can explain in a comment why `[]any` is appropriate here but `[]Shape` would be better for a collection of shapes.
+**Checkpoint:** Verify `go build ./...` compiles both the library package and the binary. Confirm the library package contains no `main()` function.
 
 ---
 
-### Final Lab (Project): Shape Library
+### Lab 3: `internal/` Package
 
-**What you'll practise:** combining interface design, type assertions, type switches, interface composition, and the empty interface into a coherent shape library.
+**What you'll practise:** Using `internal/` to enforce encapsulation — the compiler prevents external modules from importing it.
 
 **Task:**
-Build a complete shape library that brings together all six labs: define the `Shape` interface, implement three concrete types, write `TotalArea` and `LargestShape`, add a type switch `describe` function, compose a `LabelledShape` interface, and demonstrate `any`.
+Create `internal/store/store.go`. Import it successfully from within the module. Then attempt to import it from a throwaway module outside `day-32/` to observe the compiler error.
 
 **Steps:**
-1. Define `Shape` interface with `Area() float64` and `Perimeter() float64`
-2. Implement `Circle`, `Rectangle`, `Triangle` concrete types with `fmt.Stringer`
-3. Write `TotalArea(shapes []Shape) float64` and `LargestShape(shapes []Shape) Shape`
-4. Write `describe(s Shape) string` using a type switch
-5. Create a mixed `[]Shape` and print total area, largest shape, and descriptions
+1. Create `day-32/internal/store/store.go` with `package store`
+2. Move `MemStore` into it
+3. Import it from `cmd/notes/main.go` — this works (same module tree)
+4. Create a temporary directory outside `day-32/` with its own `go.mod` and attempt the import
+5. Record the exact compiler error message
 
 ```go
-shapes := []Shape{
-    Circle{Radius: 5},
-    Rectangle{Width: 3, Height: 4},
-    Triangle{A: 3, B: 4, C: 5},
+// day-32/internal/store/store.go
+package store
+
+type Note struct { ID int; Title, Body string }
+
+type MemStore struct {
+    mu    sync.Mutex
+    notes []Note
+    next  int
 }
-fmt.Printf("Total area:  %.2f\n", TotalArea(shapes))
-fmt.Printf("Largest:     %s\n", LargestShape(shapes))
-for _, s := range shapes {
-    fmt.Println(describe(s))
-}
+
+func NewMemStore() *MemStore { return &MemStore{next: 1} }
 ```
 
 **Expected output:**
 ```
-Total area:  96.54
-Largest:     Circle(r=5.00)
-a circle with radius 5.00 and area 78.54
-a 3.00 by 4.00 rectangle
-a triangle with sides 3.00, 4.00, 5.00
+# From cmd/notes inside day-32: builds fine
+
+# From an outside module:
+./main.go:5:2: use of internal package day32/internal/store not allowed
 ```
 
-**Checkpoint:** `go test ./...` passes; `go vet ./...` is clean; each concrete type satisfies `Shape` with no explicit declaration.
+**Checkpoint:** Read the Go spec on internal packages. State the rule in a comment: only code rooted at the **parent** of `internal/` may import it.
 
-**Extension ideas:** add a `Scale(factor float64) Shape` method; implement `json.Marshaler`.
+---
+
+### Lab 4: Domain-Driven Layout
+
+**What you'll practise:** Reorganising a codebase into a domain-driven structure with `internal/note/` and `internal/platform/`.
+
+**Task:**
+Restructure `day-32/` into the domain-driven layout. Note types, store, and handlers all live under `internal/note/`. Config lives under `internal/platform/config/`.
+
+**Steps:**
+1. Create `internal/note/note.go` — the `Note` type
+2. Create `internal/note/store.go` — `Store` interface + `MemStore`
+3. Create `internal/note/handler.go` — HTTP handlers
+4. Create `internal/platform/config/config.go` — `Config{Addr string}`
+5. Update `cmd/notes/main.go` to import from the internal packages and wire them explicitly
+
+```
+day-32/
+├── go.mod
+├── cmd/notes/main.go
+└── internal/
+    ├── note/
+    │   ├── note.go
+    │   ├── store.go
+    │   └── handler.go
+    └── platform/
+        └── config/
+            └── config.go
+```
+
+**Expected output:**
+```
+go build ./...  ← all packages compile
+go vet ./...    ← no issues reported
+```
+
+**Checkpoint:** Open `internal/note/handler.go`. It must import `internal/note` (the store interface) but nothing from `cmd/`. Confirm the import graph has no cycles.
+
+---
+
+### Lab 5: Dependency Injection
+
+**What you'll practise:** Passing the store as an interface to the handler constructor, decoupling HTTP from storage and enabling test doubles.
+
+**Task:**
+Define a `Store` interface in `internal/note/`. Pass it into `NewHandler(s Store)`. Write a test using an in-memory fake — no real store required.
+
+**Steps:**
+1. In `internal/note/store.go`, define `type Store interface { Add(Note) Note; All() []Note; FindByID(int) (Note, bool) }`
+2. Ensure `MemStore` implements `Store`; add a compile-time check `var _ Store = (*MemStore)(nil)`
+3. `NewHandler(s Store) *Handler` — the handler holds the interface, not the concrete type
+4. In `internal/note/handler_test.go`, define `type fakeStore struct{...}` implementing `Store`
+5. Test `GET /notes` with zero, one, and three notes using only the fake
+
+```go
+// internal/note/store.go
+type Store interface {
+    Add(n Note) Note
+    All() []Note
+    FindByID(id int) (Note, bool)
+}
+
+// internal/note/handler.go
+type Handler struct{ store Store }
+func NewHandler(s Store) *Handler { return &Handler{store: s} }
+```
+
+**Expected output:**
+```
+--- PASS: TestListNotes/empty (0.00s)
+--- PASS: TestListNotes/one_note (0.00s)
+--- PASS: TestListNotes/three_notes (0.00s)
+```
+
+**Checkpoint:** Delete the `MemStore` import from `handler_test.go` — tests must still compile and pass using only the fake store.
+
+---
+
+### Lab 6: Avoiding Circular Imports
+
+**What you'll practise:** Recognising a circular import error and breaking the cycle using a shared interface package.
+
+**Task:**
+Deliberately create a cycle between two packages. Observe the compiler error. Break it by extracting a shared interface into a third package.
+
+**Steps:**
+1. Create `internal/a/a.go` importing `day32/internal/b`
+2. Create `internal/b/b.go` importing `day32/internal/a`
+3. Run `go build ./...` — observe the import cycle error
+4. Create `internal/types/types.go` with a shared interface both packages need
+5. Change `a` and `b` to import `types` instead of each other; rebuild
+
+```go
+// internal/a/a.go — broken
+package a
+import "day32/internal/b"  // cycle!
+
+// internal/b/b.go — broken
+package b
+import "day32/internal/a"  // cycle!
+```
+
+**Expected output:**
+```
+# Broken:
+import cycle not allowed:
+  day32/internal/a → day32/internal/b → day32/internal/a
+
+# Fixed (a and b both import types, not each other):
+go build ./...  ← succeeds
+```
+
+**Checkpoint:** Draw the import graph before and after the fix. Confirm no package in the fixed version imports a package that imports it back.
+
+---
+
+### Lab 7: Module Boundaries
+
+**What you'll practise:** Understanding the decision criteria for splitting code into multiple packages vs multiple modules.
+
+**Task:**
+This is a design analysis lab. Evaluate three real-world scenarios, decide packages vs modules, and record your reasoning as Go comments in a `decisions.go` file.
+
+**Steps:**
+1. **Scenario A:** A CLI tool and a shared config library in the same repo, released together → same module, separate packages
+2. **Scenario B:** A utility library published on pkg.go.dev that other teams import and pin by version → separate module with its own `go.mod`
+3. **Scenario C:** A monorepo with 5 microservices sharing a `common/` library → `go.work` workspace, one module per service plus one for `common/`
+4. Create `day-32/decisions.go` (`package main`) containing your reasoning as comments
+5. Run `go vet ./...` to confirm the file is valid Go
+
+```go
+// decisions.go
+package main
+
+// Scenario A: CLI + shared config — same module, separate packages
+// Reason: released together; no independent versioning needed.
+// Layout: myapp/ (go.mod), myapp/cmd/cli/, myapp/internal/config/
+
+// Scenario B: Published library
+// Reason: independent semantic versioning; external consumers pin specific tags.
+// Layout: separate repo, own go.mod, v2+ in module path when breaking changes ship.
+
+// Scenario C: Monorepo with 5 services
+// Reason: go.work lets each service module resolve dependencies locally during dev.
+// Layout: go.work at root; service-a/go.mod, service-b/go.mod, common/go.mod.
+```
+
+**Expected output:**
+```
+go vet ./...  ← no output (no issues)
+```
+
+**Checkpoint:** Look up two open-source Go projects (e.g., `go-chi/chi` and `google/go-cloud`). Which layout do they use? Add a short note to your comments.
+
+---
+
+## Day Project: Restructure the Notes API
+
+Take the notes API built in Days 22–25 and restructure it into the domain-driven layout above:
+
+1. Create `cmd/api/main.go` that wires everything with explicit constructors
+2. Move types to `internal/note/note.go`
+3. Extract `Store` interface to `internal/note/store.go`; SQL implementation to `sqlstore.go`
+4. Move business logic to `internal/note/service.go`
+5. Move HTTP handlers to `internal/note/handler.go`
+6. Move config loading to `internal/platform/config/config.go`
+7. Verify everything compiles: `go build ./...`
+8. Verify tests still pass: `go test ./...`
+
+**Extension ideas:** add a second binary `cmd/migrate/main.go` that runs DB migrations standalone; add `internal/platform/logger/` that initialises `slog` with level from config.
 
 ## Official Documentation
 
-- [`fmt`](https://pkg.go.dev/fmt) — Stringer interface, Printf, Sprintf
-- [`io`](https://pkg.go.dev/io) — Reader and Writer interfaces
-- [`sort`](https://pkg.go.dev/sort) — sort.Interface for custom sorting
-- [`math`](https://pkg.go.dev/math) — `math.Pi` and other constants
-- [Language Spec: Interface types](https://go.dev/ref/spec#Interface_types) — interface declarations
-- [Language Spec: Type assertions](https://go.dev/ref/spec#Type_assertions) — safe type extraction
-- [Language Spec: Type switches](https://go.dev/ref/spec#Type_switches) — dispatch on concrete type
-- [Effective Go: Interfaces](https://go.dev/doc/effective_go#interfaces) — interface design principles
-- [Go Tour: Interfaces](https://go.dev/tour/methods/9) — interactive interfaces tour
+- [`net/http`](https://pkg.go.dev/net/http) — `Server`, `ListenAndServe`, `Handler` — wired in `cmd/api/main.go`
+- [`log`](https://pkg.go.dev/log) — `Fatal` for startup errors
+- [`log/slog`](https://pkg.go.dev/log/slog) — structured logger initialised in `internal/platform/logger/`
+- [`database/sql`](https://pkg.go.dev/database/sql) — `DB` opened in `internal/platform/database/`
+- [Go Modules Reference — internal packages](https://go.dev/ref/mod#go-mod-file) — compiler enforcement of `internal/` boundaries
+- [Go Blog: Organizing a Go module](https://go.dev/blog/organizing-go-code)
+- [Go Blog: Package names](https://go.dev/blog/package-names) — naming conventions for packages
+- [Language Spec — Package clause](https://go.dev/ref/spec#Package_clause)
+- [cmd/go — internal directories](https://pkg.go.dev/cmd/go#hdr-Internal_Directories) — how the compiler enforces `internal/`

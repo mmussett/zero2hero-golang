@@ -1,159 +1,146 @@
+// Day 27 — Final Project: Go Book Store
+//
+// A self-contained web application that demonstrates //go:embed, html/template
+// with FuncMap, build tags for dev/prod switching, and //go:generate for build
+// metadata.
+//
+// Build modes:
+//
+//	go run .                  # dev  — templates and assets read from disk
+//	go run -tags prod .       # prod — everything embedded in the binary
+//	go build -tags prod -o bookstore-prod .
+//	go generate ./...         # refresh internal/version/version.go
+//
+//go:generate go run gen/version.go
+
 package main
 
 import (
+	"flag"
 	"fmt"
-	"reflect"
+	"html/template"
+	"io/fs"
+	"net/http"
+	"os"
 	"strings"
+
+	"github.com/mmussett/zero2hero-golang/day-28/internal/version"
 )
 
-// User is the demo struct used throughout this day's examples.
-type User struct {
-	Name  string `json:"name"`
-	Age   int    `json:"age"`
-	Email string `json:"email,omitempty"`
+// Product is a single item in the book catalogue.
+type Product struct {
+	Name    string
+	Price   float64
+	InStock bool
 }
 
-// describe prints the type name, kind, and all fields (name / type / tag / value)
-// of any struct value passed as an interface{}.
-func describe(v interface{}) {
-	t := reflect.TypeOf(v)
-	val := reflect.ValueOf(v)
-
-	// Dereference pointer if needed
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-		val = val.Elem()
-	}
-
-	fmt.Printf("Type: %s\n", t.Name())
-	fmt.Printf("Kind: %s\n", t.Kind())
-
-	if t.Kind() != reflect.Struct {
-		fmt.Printf("Value: %v\n", val)
-		return
-	}
-
-	fmt.Printf("Fields (%d):\n", t.NumField())
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		fieldVal := val.Field(i)
-		fmt.Printf("  %-12s  type:%-10s  tag:%-30q  value:%v\n",
-			field.Name,
-			field.Type.Name(),
-			string(field.Tag),
-			fieldVal.Interface(),
-		)
-	}
+// catalog is the in-memory product database for the store.
+var catalog = []Product{
+	{"The Go Programming Language", 49.99, true},
+	{"Learning Go, 2nd Edition", 39.99, true},
+	{"Go in Action", 44.99, false},
+	{"Concurrency in Go", 34.99, true},
+	{"Go Web Programming", 29.99, false},
+	{"Cloud Native Go", 54.99, true},
 }
 
-// DiffStructs returns the names of exported fields whose values differ between
-// two struct values of the same type. Both a and b must be structs (or pointers
-// to structs) of the same underlying type.
-func DiffStructs(a, b interface{}) []string {
-	ta := reflect.TypeOf(a)
-	va := reflect.ValueOf(a)
-	vb := reflect.ValueOf(b)
-
-	if ta.Kind() == reflect.Ptr {
-		ta = ta.Elem()
-		va = va.Elem()
-		vb = vb.Elem()
-	}
-
-	var diffs []string
-	for i := 0; i < ta.NumField(); i++ {
-		field := ta.Field(i)
-		if !field.IsExported() {
-			continue
-		}
-		fa := va.Field(i).Interface()
-		fb := vb.Field(i).Interface()
-		if !reflect.DeepEqual(fa, fb) {
-			diffs = append(diffs, field.Name)
-		}
-	}
-	return diffs
-}
-
-// CopyFields copies exported fields from src to dst by name, only when the
-// field type matches in both structs. dst must be a pointer to a struct.
-func CopyFields(dst, src interface{}) {
-	srcType := reflect.TypeOf(src)
-	srcVal := reflect.ValueOf(src)
-	dstVal := reflect.ValueOf(dst)
-
-	if srcType.Kind() == reflect.Ptr {
-		srcType = srcType.Elem()
-		srcVal = srcVal.Elem()
-	}
-	if dstVal.Kind() != reflect.Ptr {
-		panic("CopyFields: dst must be a pointer")
-	}
-	dstVal = dstVal.Elem()
-	dstType := dstVal.Type()
-
-	for i := 0; i < srcType.NumField(); i++ {
-		srcField := srcType.Field(i)
-		if !srcField.IsExported() {
-			continue
-		}
-		dstField, ok := dstType.FieldByName(srcField.Name)
-		if !ok {
-			continue
-		}
-		if dstField.Type != srcField.Type {
-			continue
-		}
-		dstVal.FieldByName(srcField.Name).Set(srcVal.Field(i))
-	}
+// pageData holds every value the index.html template needs.
+type pageData struct {
+	BuildTime string
+	Query     string
+	Products  []Product
 }
 
 func main() {
-	fmt.Println("=== Day 28: Reflection ===")
-	fmt.Println()
+	addr := flag.String("addr", ":8080", "TCP address to listen on")
+	flag.Parse()
 
-	// ── describe ─────────────────────────────────────────────────────────────
-	fmt.Println("--- describe(User{...}) ---")
-	u := User{Name: "Alice", Age: 30, Email: "alice@example.com"}
-	describe(u)
-
-	fmt.Println()
-	fmt.Println("--- describe(&User{...}) (pointer) ---")
-	describe(&u)
-
-	// ── DiffStructs ──────────────────────────────────────────────────────────
-	fmt.Println()
-	fmt.Println("--- DiffStructs ---")
-	u1 := User{Name: "Alice", Age: 30, Email: "alice@example.com"}
-	u2 := User{Name: "Alice", Age: 31, Email: "alice@new.com"}
-	diffs := DiffStructs(u1, u2)
-	fmt.Printf("Fields that differ: %s\n", strings.Join(diffs, ", "))
-
-	u3 := User{Name: "Alice", Age: 30, Email: "alice@example.com"}
-	diffs2 := DiffStructs(u1, u3)
-	if len(diffs2) == 0 {
-		fmt.Println("No differences (identical structs)")
+	// Open assets and templates from disk (dev) or embedded binary (prod).
+	assets, err := openAssets()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "open assets: %v\n", err)
+		os.Exit(1)
 	}
 
-	// ── CopyFields ───────────────────────────────────────────────────────────
-	fmt.Println()
-	fmt.Println("--- CopyFields ---")
-	src := User{Name: "Bob", Age: 25, Email: "bob@example.com"}
-	var dst User
-	CopyFields(&dst, src)
-	fmt.Printf("After CopyFields: %+v\n", dst)
-
-	// Partial copy – only Name and Age exist in target
-	type Partial struct {
-		Name string
-		Age  int
+	// Print the ASCII-art banner stored in assets/banner.txt.
+	if data, readErr := fs.ReadFile(assets, "banner.txt"); readErr == nil {
+		fmt.Print(string(data))
 	}
-	var p Partial
-	CopyFields(&p, src)
-	fmt.Printf("After CopyFields into Partial: %+v\n", p)
 
-	// ── reflect on a non-struct ───────────────────────────────────────────────
-	fmt.Println()
-	fmt.Println("--- describe(42) ---")
-	describe(42)
+	fmt.Printf("build time : %s\n", version.BuildTime)
+
+	tmplFS, err := openTemplates()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "open templates: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Register custom template functions, then parse all *.html files.
+	tmpl := template.Must(
+		template.New("").Funcs(funcMap()).ParseFS(tmplFS, "*.html"),
+	)
+
+	mux := http.NewServeMux()
+
+	// Serve static assets at /assets/: CSS, JS, images.
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
+
+	// Serve the dynamic product-catalogue page at /.
+	mux.HandleFunc("/", indexHandler(tmpl))
+
+	fmt.Printf("listening on http://localhost%s\n", *addr)
+	if err := http.ListenAndServe(*addr, mux); err != nil {
+		fmt.Fprintf(os.Stderr, "server: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// indexHandler returns an HTTP handler that renders the product catalogue.
+// It reads the optional ?q= query parameter and filters products by name.
+func indexHandler(tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		data := pageData{
+			BuildTime: version.BuildTime,
+			Query:     q,
+			Products:  filterProducts(catalog, q),
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// filterProducts returns catalogue entries whose Name contains q (case-insensitive).
+// An empty q returns all entries unchanged.
+func filterProducts(products []Product, q string) []Product {
+	if q == "" {
+		return products
+	}
+	q = strings.ToLower(q)
+	out := make([]Product, 0, len(products))
+	for _, p := range products {
+		if strings.Contains(strings.ToLower(p.Name), q) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// funcMap returns the custom template functions available in index.html:
+//
+//   - upper       — strings.ToUpper
+//   - formatPrice — format float64 as "XX.XX"
+//   - join        — strings.Join (for slice-to-string rendering)
+func funcMap() template.FuncMap {
+	return template.FuncMap{
+		"upper":       strings.ToUpper,
+		"formatPrice": func(f float64) string { return fmt.Sprintf("%.2f", f) },
+		"join":        strings.Join,
+	}
 }

@@ -1,441 +1,425 @@
-# Day 13: Testing
+# Day 13: Closures and Higher-Order Functions
 
-## Core Concept: Testing Is Built In
+## Functions Are First-Class Values
 
-Go's testing framework is part of the standard library — no third-party runner required.
-
-```bash
-go test ./...              # run all tests
-go test -v ./...           # verbose output
-go test -run TestFoo ./... # run tests matching "TestFoo"
-go test -count=1 ./...     # disable test caching
-go test -race ./...        # race detector
-```
-
-## Test File Layout
-
-```
-day-13/
-├── calc.go
-└── calc_test.go   // same package: package main (or package calc)
-```
-
-Tests live in `_test.go` files. The test binary is built separately from the main binary.
-
-## Basic Test
+In Go, functions are values. They can be assigned to variables, passed as arguments, and returned from other functions.
 
 ```go
-import "testing"
+add := func(a, b int) int { return a + b }
+fmt.Println(add(2, 3)) // 5
 
-func TestAdd(t *testing.T) {
-    got  := add(2, 3)
-    want := 5
-    if got != want {
-        t.Errorf("add(2,3) = %d; want %d", got, want)
+func apply(f func(int) int, x int) int { return f(x) }
+```
+
+## Closures
+
+A closure is a function that captures variables from its enclosing scope:
+
+```go
+func counter(start int) func() int {
+    n := start
+    return func() int {
+        n++
+        return n
     }
 }
+
+next := counter(0)
+fmt.Println(next()) // 1
+fmt.Println(next()) // 2
 ```
 
-## Table-Driven Tests (Idiomatic Go)
+The captured variable `n` is shared between the closure and the outer function — mutations are visible to both.
+
+## Higher-Order Functions
 
 ```go
-func TestDivide(t *testing.T) {
-    cases := []struct {
-        name    string
-        a, b    float64
-        want    float64
-        wantErr bool
-    }{
-        {"positive", 10, 2, 5, false},
-        {"negative divisor", -10, 2, -5, false},
-        {"divide by zero", 1, 0, 0, true},
-    }
+func Map[T, U any](s []T, f func(T) U) []U { ... }
+func Filter[T any](s []T, keep func(T) bool) []T { ... }
+func Reduce[T, U any](s []T, init U, f func(U, T) U) U { ... }
 
-    for _, tc := range cases {
-        t.Run(tc.name, func(t *testing.T) {
-            got, err := divide(tc.a, tc.b)
-            if (err != nil) != tc.wantErr {
-                t.Fatalf("unexpected error: %v", err)
-            }
-            if !tc.wantErr && got != tc.want {
-                t.Errorf("got %v; want %v", got, tc.want)
-            }
-        })
-    }
+// Pipeline
+words := []string{"hello", "world", "go", "generics"}
+result := Filter(words, func(w string) bool { return len(w) > 3 })
+upper  := Map(result, strings.ToUpper)
+```
+
+## Functional Options Pattern
+
+A clean way to handle optional configuration without ever-growing constructor arguments:
+
+```go
+type Server struct {
+    host    string
+    port    int
+    timeout time.Duration
 }
-```
 
-[`t.Run`](https://pkg.go.dev/testing#T.Run) creates subtests — run a single subtest with `-run TestDivide/divide_by_zero`.
+type Option func(*Server)
 
-## Benchmarks
+func WithPort(p int) Option              { return func(s *Server) { s.port = p } }
+func WithTimeout(d time.Duration) Option { return func(s *Server) { s.timeout = d } }
 
-```go
-func BenchmarkWordCount(b *testing.B) {
-    text := strings.Repeat("the quick brown fox ", 1000)
-    b.ResetTimer()
-    for i := 0; i < b.N; i++ {
-        wordCount(text)
+func NewServer(host string, opts ...Option) *Server {
+    s := &Server{host: host, port: 8080, timeout: 30 * time.Second}
+    for _, opt := range opts {
+        opt(s)
     }
+    return s
 }
+
+srv := NewServer("localhost", WithPort(9090), WithTimeout(60*time.Second))
 ```
 
-```bash
-go test -bench=. -benchmem ./...
-```
-
-`b.N` is set by the framework to run long enough for a stable measurement. `-benchmem` shows allocations per operation.
-
-## testify (External)
-
-[`github.com/stretchr/testify`](https://pkg.go.dev/github.com/stretchr/testify) provides cleaner assertions:
+## Memoisation
 
 ```go
-import "github.com/stretchr/testify/assert"
-
-assert.Equal(t, want, got)
-assert.NoError(t, err)
-assert.ErrorIs(t, err, ErrNotFound)
-```
-
-## Test Helpers
-
-```go
-func TestMain(m *testing.M) {
-    // global setup
-    os.Exit(m.Run())
+func Memoize[K comparable, V any](f func(K) V) func(K) V {
+    cache := make(map[K]V)
+    return func(k K) V {
+        if v, ok := cache[k]; ok { return v }
+        v := f(k); cache[k] = v; return v
+    }
 }
 ```
 
 ## Labs
 
-### Lab 1: First Test — Table-Driven TestAdd
+### Lab 1: Closure Basics — Counter
 
-**What you'll practise:** Writing your first test function with multiple table cases.
+**What you'll practise:** closures that capture and mutate private state across multiple calls.
 
 **Task:**
-Create `calc.go` with an `add(a, b int) int` function, then write a table-driven test in `calc_test.go` covering positive numbers, negative numbers, zero, and a large value close to `math.MaxInt32`.
+Write `makeCounter(start int) func() int` — a function that returns a closure. Each call to the returned function increments and returns its private counter. Create two independent counters and confirm they have separate state.
 
 **Steps:**
-1. Create `calc.go` with the `add` function
-2. Create `calc_test.go` with a `cases` slice of anonymous structs
-3. Loop over `cases` using `t.Run` — but for this lab use a plain `if` check without subtests
-4. Run `go test -v ./...` and observe the PASS/FAIL output
+1. Write `makeCounter(start int) func() int` — capture `n := start` in a closure
+2. Return a closure that increments `n` and returns it
+3. In `main`, create `counter1 := makeCounter(0)` and `counter2 := makeCounter(10)`
+4. Call each 3 times and print results to confirm independence
 
 ```go
-// calc_test.go
-func TestAdd(t *testing.T) {
-    cases := []struct {
-        name    string
-        a, b    int
-        want    int
-    }{
-        {"positive", 2, 3, 5},
-        {"negative", -4, -6, -10},
-        {"zero", 0, 0, 0},
-        {"large", math.MaxInt32, 1, math.MaxInt32 + 1},
+func makeCounter(start int) func() int {
+    n := start
+    return func() int {
+        n++
+        return n
     }
-    for _, tc := range cases {
-        got := add(tc.a, tc.b)
-        if got != tc.want {
-            t.Errorf("%s: add(%d, %d) = %d; want %d", tc.name, tc.a, tc.b, got, tc.want)
+}
+
+func main() {
+    c1 := makeCounter(0)
+    c2 := makeCounter(10)
+    fmt.Println(c1(), c1(), c1()) // 1 2 3
+    fmt.Println(c2(), c2(), c2()) // 11 12 13
+    fmt.Println(c1())             // 4  (state is independent)
+}
+```
+
+**Expected output:**
+```
+1 2 3
+11 12 13
+4
+```
+
+**Checkpoint:** `c1` and `c2` maintain completely separate internal counters; calling one does not affect the other.
+
+---
+
+### Lab 2: Memoization
+
+**What you'll practise:** using a closure over a map to cache expensive function results.
+
+**Task:**
+Write `memoize(f func(int) int) func(int) int` that wraps `f` in a cache. Apply it to a naive recursive fibonacci to confirm calls are cached and the cached version is dramatically faster.
+
+**Steps:**
+1. Implement `memoize` capturing a `cache map[int]int` in the closure
+2. On each call, check the cache first; if missing, compute and store
+3. Write a naive `fib(n int) int` (recursive, no cache)
+4. Apply `memoize` to it and compare `fib(40)` timing with and without
+
+```go
+func memoize(f func(int) int) func(int) int {
+    cache := make(map[int]int)
+    return func(n int) int {
+        if v, ok := cache[n]; ok {
+            return v
         }
+        v := f(n)
+        cache[n] = v
+        return v
     }
+}
+
+var memoFib func(int) int
+memoFib = memoize(func(n int) int {
+    if n <= 1 { return n }
+    return memoFib(n-1) + memoFib(n-2)
+})
+```
+
+**Expected output:**
+```
+fib(10) = 55
+fib(40) = 102334155
+memoized fib(40) in < 1ms; naive in seconds
+```
+
+**Checkpoint:** `memoFib(40)` returns the correct value and completes in under 1 ms. The cache is private to the memoized function.
+
+---
+
+### Lab 3: Pipeline Pattern
+
+**What you'll practise:** using functions as first-class values to compose reusable data-transformation stages.
+
+**Task:**
+Define `type Stage func([]string) []string` and implement four stages: `Lowercase`, `TrimSpaces`, `RemoveEmpty`, and `Deduplicate`. Write a `Pipeline` function that applies stages in sequence.
+
+**Steps:**
+1. Define the `Stage` type
+2. Implement `Lowercase` using `strings.ToLower`, `TrimSpaces` using `strings.TrimSpace`, `RemoveEmpty` filtering blank strings, and `Deduplicate` preserving first occurrence
+3. Implement `Pipeline(data []string, stages ...Stage) []string`
+4. Test with a messy input slice
+
+```go
+type Stage func([]string) []string
+
+func Pipeline(data []string, stages ...Stage) []string {
+    for _, s := range stages {
+        data = s(data)
+    }
+    return data
+}
+
+func Lowercase(in []string) []string {
+    out := make([]string, len(in))
+    for i, s := range in { out[i] = strings.ToLower(s) }
+    return out
+}
+
+func RemoveEmpty(in []string) []string {
+    var out []string
+    for _, s := range in {
+        if s != "" { out = append(out, s) }
+    }
+    return out
 }
 ```
 
 **Expected output:**
 ```
---- PASS: TestAdd (0.00s)
-ok  	day-13	0.001s
+Input:  ["  Go ", "RUST", "", "go", "  "]
+Output: [go rust]
 ```
 
-**Checkpoint:** `go test -v ./...` exits 0 with all cases passing.
+**Checkpoint:** The pipeline is composable — any subset of stages can be passed in any order.
 
 ---
 
-### Lab 2: Subtests — Isolate Each Case with t.Run
+### Lab 4: Functional Options
 
-**What you'll practise:** Using `t.Run` to create named subtests and filter them from the command line.
+**What you'll practise:** the functional options pattern — building flexible constructors without telescoping parameters.
 
 **Task:**
-Refactor the `TestAdd` from Lab 1 so each case runs as a subtest via `t.Run(tc.name, ...)`. Then use the `-run` flag to execute only one subtest.
+Build a `Server` struct with fields `host string`, `port int`, `timeout time.Duration`, and `maxConns int`. Write `WithPort`, `WithTimeout`, `WithMaxConns` option functions. Implement `NewServer(host string, opts ...Option) *Server`.
 
 **Steps:**
-1. Wrap the inner `if` check in `t.Run(tc.name, func(t *testing.T) { ... })`
-2. Run all subtests: `go test -v -run TestAdd ./...`
-3. Run only the negative case: `go test -v -run TestAdd/negative ./...`
-4. Intentionally break one case and observe the isolated failure output
+1. Define `type Option func(*Server)`
+2. Implement `WithPort(p int) Option`, `WithTimeout(d time.Duration) Option`, `WithMaxConns(n int) Option` — each returns a closure that modifies a `*Server`
+3. Set sensible defaults in `NewServer` before applying options
+4. Create three servers with different option combinations and print their configs
 
 ```go
-for _, tc := range cases {
-    tc := tc // capture range variable
-    t.Run(tc.name, func(t *testing.T) {
-        got := add(tc.a, tc.b)
-        if got != tc.want {
-            t.Errorf("add(%d, %d) = %d; want %d", tc.a, tc.b, got, tc.want)
+type Server struct {
+    host     string
+    port     int
+    timeout  time.Duration
+    maxConns int
+}
+
+type Option func(*Server)
+
+func WithPort(p int) Option              { return func(s *Server) { s.port = p } }
+func WithTimeout(d time.Duration) Option { return func(s *Server) { s.timeout = d } }
+func WithMaxConns(n int) Option          { return func(s *Server) { s.maxConns = n } }
+
+func NewServer(host string, opts ...Option) *Server {
+    s := &Server{host: host, port: 8080, timeout: 30 * time.Second, maxConns: 100}
+    for _, opt := range opts { opt(s) }
+    return s
+}
+```
+
+**Expected output:**
+```
+default: localhost:8080 timeout=30s maxConns=100
+custom:  localhost:9090 timeout=60s maxConns=50
+```
+
+**Checkpoint:** Adding a new option does not change the `NewServer` signature. Calling `NewServer(host)` with no options returns defaults.
+
+---
+
+### Lab 5: Generator — `Range`
+
+**What you'll practise:** implementing a lazy sequence generator using a closure to yield values on demand.
+
+**Task:**
+Write `Range(from, to int) func() (int, bool)` — a generator that returns successive integers from `from` to `to` inclusive. Each call to the returned function yields the next value and `true`; after exhaustion it returns `0, false`.
+
+**Steps:**
+1. Implement `Range` capturing `current := from` in a closure
+2. Each invocation: if `current > to`, return `0, false`; otherwise return `current, true` and increment
+3. In `main`, drive the generator with a `for` loop using the comma-ok idiom
+4. Compose two generators: use one to generate indices into a string slice
+
+```go
+func Range(from, to int) func() (int, bool) {
+    current := from
+    return func() (int, bool) {
+        if current > to {
+            return 0, false
         }
-    })
-}
-```
-
-**Expected output:**
-```
---- PASS: TestAdd (0.00s)
-    --- PASS: TestAdd/positive (0.00s)
-    --- PASS: TestAdd/negative (0.00s)
-    --- PASS: TestAdd/zero (0.00s)
-    --- PASS: TestAdd/large (0.00s)
-```
-
-**Checkpoint:** `go test -v -run TestAdd/negative ./...` runs exactly one subtest.
-
----
-
-### Lab 3: Test Helpers — assertEq with t.Helper
-
-**What you'll practise:** Writing a reusable generic test helper that reports the correct line number.
-
-**Task:**
-Write a generic `assertEq[T comparable]` helper function. Use it in at least two different test functions. Observe how `t.Helper()` makes failures point to the call site, not the helper body.
-
-**Steps:**
-1. Write the helper in `calc_test.go` (or a `testutil_test.go` file)
-2. Remove `t.Helper()` first — run a failing test and note the line reported
-3. Add `t.Helper()` back — observe the line number now points to the caller
-4. Use `assertEq` in both `TestAdd` and a new `TestMultiply` function
-
-```go
-func assertEq[T comparable](t *testing.T, got, want T) {
-    t.Helper()
-    if got != want {
-        t.Errorf("got %v; want %v", got, want)
+        v := current
+        current++
+        return v, true
     }
 }
 
-func TestMultiply(t *testing.T) {
-    assertEq(t, multiply(3, 4), 12)
-    assertEq(t, multiply(-2, 5), -10)
-    assertEq(t, multiply(0, 99), 0)
+gen := Range(1, 5)
+for v, ok := gen(); ok; v, ok = gen() {
+    fmt.Println(v)
 }
 ```
 
 **Expected output:**
 ```
---- PASS: TestMultiply (0.00s)
+1
+2
+3
+4
+5
 ```
 
-**Checkpoint:** A deliberately wrong expected value shows the line in `TestMultiply`, not inside `assertEq`.
+**Checkpoint:** The generator yields exactly `to - from + 1` values and then consistently returns `0, false`.
 
 ---
 
-### Lab 4: Testify — Cleaner Assertions
+### Lab 6: Lazy Initialisation with `sync.Once`
 
-**What you'll practise:** Using `github.com/stretchr/testify` assert and require packages.
+**What you'll practise:** combining closures with `sync.Once` to build a thread-safe lazy value that is computed at most once.
 
 **Task:**
-Rewrite Lab 1's `TestAdd` using `assert.Equal`. Add a `divide(a, b float64) (float64, error)` function, then write a test that uses `assert.Error` and `require.NoError` to distinguish expected vs unexpected errors.
+Implement `type Lazy[T any] struct` with a `Get() T` method that calls a user-supplied `compute func() T` exactly once, caching the result for all subsequent calls.
 
 **Steps:**
-1. `go get github.com/stretchr/testify` (already in this module's go.mod)
-2. Import `"github.com/stretchr/testify/assert"` and `"github.com/stretchr/testify/require"`
-3. Rewrite `TestAdd` using `assert.Equal(t, want, got)`
-4. Write `TestDivide` with a zero-divisor case using `assert.Error` and a normal case using `require.NoError` then `assert.Equal`
+1. Define `type Lazy[T any] struct { once sync.Once; value T; compute func() T }`
+2. Implement `NewLazy[T any](f func() T) *Lazy[T]` storing `f` in the struct
+3. Implement `Get() T` calling `l.once.Do(func() { l.value = l.compute() })` then returning `l.value`
+4. Verify with a compute function that prints a message — confirm it prints exactly once even with multiple `Get` calls
 
 ```go
-import (
-    "testing"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
+import "sync"
+
+type Lazy[T any] struct {
+    once    sync.Once
+    value   T
+    compute func() T
+}
+
+func NewLazy[T any](f func() T) *Lazy[T] {
+    return &Lazy[T]{compute: f}
+}
+
+func (l *Lazy[T]) Get() T {
+    l.once.Do(func() { l.value = l.compute() })
+    return l.value
+}
+
+config := NewLazy(func() string {
+    fmt.Println("computing config...") // prints once
+    return "host=localhost port=8080"
+})
+fmt.Println(config.Get())
+fmt.Println(config.Get()) // no "computing config..." again
+```
+
+**Expected output:**
+```
+computing config...
+host=localhost port=8080
+host=localhost port=8080
+```
+
+**Checkpoint:** The compute function is called exactly once regardless of how many times `Get` is called, including concurrent calls.
+
+---
+
+### Final Lab (Project): Data Pipeline
+
+**What you'll practise:** combining closures, higher-order functions, the pipeline pattern, and functional options into a production-quality data processing component.
+
+**Task:**
+Build a pipeline that processes a slice of strings through composable stages. Add functional options for pipeline configuration.
+
+**Steps:**
+1. Define `type Stage func([]string) []string` and `Pipeline(data []string, stages ...Stage) []string`
+2. Implement stages: `Lowercase`, `RemoveEmpty`, `Deduplicate`, `TrimSpaces`, `FilterMinLength(n int) Stage`
+3. Use the functional options pattern for a `PipelineConfig` that controls whether to log each stage's output size
+4. Wire all labs together: use `makeCounter` to number processed batches, `memoize` to cache expensive stage results
+
+```go
+type Stage func([]string) []string
+
+func Pipeline(data []string, stages ...Stage) []string {
+    for _, s := range stages {
+        data = s(data)
+    }
+    return data
+}
+
+// FilterMinLength returns a Stage — a closure over n
+func FilterMinLength(n int) Stage {
+    return func(in []string) []string {
+        var out []string
+        for _, s := range in {
+            if len(s) >= n {
+                out = append(out, s)
+            }
+        }
+        return out
+    }
+}
+
+result := Pipeline(
+    []string{"  Go ", "RUST", "", "go", "PYTHON", "  "},
+    TrimSpaces,
+    Lowercase,
+    RemoveEmpty,
+    Deduplicate,
+    FilterMinLength(3),
 )
-
-func TestDivide(t *testing.T) {
-    t.Run("normal", func(t *testing.T) {
-        got, err := divide(10, 2)
-        require.NoError(t, err)
-        assert.Equal(t, 5.0, got)
-    })
-    t.Run("by zero", func(t *testing.T) {
-        _, err := divide(1, 0)
-        assert.Error(t, err)
-    })
-}
+fmt.Println(result)
 ```
 
 **Expected output:**
 ```
---- PASS: TestDivide (0.00s)
-    --- PASS: TestDivide/normal (0.00s)
-    --- PASS: TestDivide/by_zero (0.00s)
+[rust python]
 ```
 
-**Checkpoint:** `go test -v ./...` passes. Note how testify's failure messages are more descriptive than manual `t.Errorf`.
+**Checkpoint:** `go test ./...` passes; every stage is independently testable; adding or removing stages from the `Pipeline` call requires no other changes.
 
----
-
-### Lab 5: Benchmarks — BenchmarkWordFrequency
-
-**What you'll practise:** Writing a benchmark with `b.ResetTimer` and reading `-benchmem` output.
-
-**Task:**
-Write a `wordFrequency(s string) map[string]int` function and benchmark it against a 1 000-word string. Use `b.ResetTimer` to exclude setup time. Run with `-benchmem` and note the allocations per operation.
-
-**Steps:**
-1. Implement `wordFrequency` using `strings.Fields`
-2. Write `BenchmarkWordFrequency` that builds the test string once before `b.ResetTimer()`
-3. Run: `go test -bench=BenchmarkWordFrequency -benchmem ./...`
-4. Try an alternative implementation (e.g. using `bufio.Scanner`) and compare the ns/op figures
-
-```go
-func BenchmarkWordFrequency(b *testing.B) {
-    text := strings.Repeat("the quick brown fox jumps over the lazy dog ", 100)
-    b.ResetTimer()
-    for i := 0; i < b.N; i++ {
-        wordFrequency(text)
-    }
-}
-```
-
-**Expected output:**
-```
-BenchmarkWordFrequency-8    50000    24000 ns/op    8192 B/op    1 allocs/op
-```
-(exact numbers vary by machine)
-
-**Checkpoint:** The benchmark runs without error and reports `ns/op` and `B/op` columns.
-
----
-
-### Lab 6: Test Coverage — Find the Gaps
-
-**What you'll practise:** Generating a coverage profile and reading the HTML report.
-
-**Task:**
-Run coverage analysis on your day-13 package, generate an HTML report, and find at least one uncovered branch. Add a test to cover it.
-
-**Steps:**
-1. `go test -coverprofile=coverage.out ./...`
-2. `go tool cover -func=coverage.out` to see per-function percentages
-3. `go tool cover -html=coverage.out` to open the browser report (green = covered, red = not)
-4. Add a test case for an uncovered branch and confirm coverage improves
-
-```bash
-go test -coverprofile=coverage.out ./...
-go tool cover -func=coverage.out
-# Look for lines showing < 100%
-go tool cover -html=coverage.out
-```
-
-**Expected output:**
-```
-day-13/calc.go:5:    add           100.0%
-day-13/calc.go:9:    divide        75.0%
-total:               (statements)  87.5%
-```
-
-**Checkpoint:** Total coverage reaches 90 %+ after adding the missing test case.
-
----
-
-### Lab 7: Fuzz Test — FuzzIsPalindrome
-
-**What you'll practise:** Writing a fuzz target with a seed corpus and running the fuzzer.
-
-**Task:**
-Implement `isPalindrome(s string) bool`. Write `FuzzIsPalindrome` with at least three seed inputs. Run the fuzzer for 10 seconds and observe whether it finds a panic.
-
-**Steps:**
-1. Implement `isPalindrome` (naive: compare `s` to `strings.Reverse(s)`, or index-based)
-2. Write `FuzzIsPalindrome` in a `_test.go` file
-3. Run: `go test -fuzz=FuzzIsPalindrome -fuzztime=10s ./...`
-4. If the fuzzer finds a failure, fix the bug and re-run
-
-```go
-func FuzzIsPalindrome(f *testing.F) {
-    // Seed corpus
-    f.Add("racecar")
-    f.Add("hello")
-    f.Add("")
-    f.Add("A")
-
-    f.Fuzz(func(t *testing.T, s string) {
-        // Property: isPalindrome must not panic on any input
-        _ = isPalindrome(s)
-    })
-}
-```
-
-**Expected output:**
-```
-fuzz: elapsed: 10s, gathering baseline coverage: 0/4 completed
-fuzz: elapsed: 10s, execs: 38291 (3829/sec), new interesting: 8 (total: 12)
-ok  	day-13	10.003s
-```
-
-**Checkpoint:** The fuzzer runs for the full 10 seconds without finding a crasher (or you fix any crash it finds).
-
----
-
-### Final Lab (Project): Full Test Suite
-
-**What you'll practise:** Combining all testing techniques — table-driven tests, subtests, helpers, testify, benchmarks, coverage, and fuzzing — into a production-quality test suite.
-
-**Task:**
-Write comprehensive tests for the functions built across Days 02–12.
-
-**Steps:**
-1. Table-driven tests for the CLI calculator (Day 02)
-2. Table-driven tests for the word frequency counter (Day 06)
-3. Subtests for the shape library (Day 08)
-4. Tests for generic Stack and Queue (Day 10)
-5. At least one benchmark with `-benchmem`
-6. Achieve > 85 % coverage (`go test -cover ./...`)
-7. Add a fuzz test for any string-processing function
-
-```go
-// Example: shape subtests
-func TestShapeArea(t *testing.T) {
-    shapes := []struct {
-        name  string
-        shape Shape
-        want  float64
-    }{
-        {"circle r=1", Circle{1}, math.Pi},
-        {"rect 3x4", Rect{3, 4}, 12},
-    }
-    for _, tc := range shapes {
-        t.Run(tc.name, func(t *testing.T) {
-            assert.InDelta(t, tc.want, tc.shape.Area(), 1e-9)
-        })
-    }
-}
-```
-
-**Expected output:**
-```
-ok  	day-13	0.45s	coverage: 87.3% of statements
-```
-
-**Checkpoint:** `go test -v -race -cover ./...` passes with coverage above 85 % and no race conditions.
-
----
-
-## Day Project: Full Test Suite
-
-Write comprehensive tests for the functions built in Days 02–12:
-1. Table-driven tests for the CLI calculator from Day 02
-2. Table-driven tests for the word frequency counter from Day 06
-3. Subtests for the shape library from Day 08
-4. Tests for generic Stack and Queue from Day 10
-5. At least one benchmark
-
-**Extension ideas:** add a fuzzing test with `go test -fuzz`; measure coverage with `go test -cover`.
+**Extension ideas:** make `Stage` operate on `chan string` for streaming; add error propagation.
 
 ## Official Documentation
 
-- [`testing`](https://pkg.go.dev/testing) — T, B, M types; Run, Errorf, Fatalf, ResetTimer, and more
-- [`strings`](https://pkg.go.dev/strings) — `strings.Repeat` used in benchmarks
-- [`os`](https://pkg.go.dev/os) — `os.Exit` in TestMain
-- [Go Blog: Table driven tests](https://go.dev/blog/subtests) — subtests and table-driven patterns
-- [Go Blog: The cover story](https://go.dev/blog/cover) — test coverage tooling
-- [Go Blog: Fuzzing](https://go.dev/blog/fuzz-beta) — fuzzing in Go 1.18+
-- [Effective Go: Testing](https://go.dev/doc/effective_go) — idiomatic test patterns
+- [`strings`](https://pkg.go.dev/strings) — `ToUpper` and other functions used in pipeline stages
+- [`fmt`](https://pkg.go.dev/fmt) — formatted output
+- [Language Spec: Function literals](https://go.dev/ref/spec#Function_literals) — closure syntax
+- [Language Spec: Variadic functions](https://go.dev/ref/spec#Passing_arguments_to_..._parameters) — `...Option` variadic parameters
+- [Effective Go: Functions](https://go.dev/doc/effective_go#functions) — first-class functions
+- [Go Blog: Functional options for friendly APIs](https://go.dev/blog/functional-options-for-friendly-apis) — functional options pattern (Dave Cheney)
+- [Go Tour: Closures](https://go.dev/tour/moretypes/25) — interactive closure tour

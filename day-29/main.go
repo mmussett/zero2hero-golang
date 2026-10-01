@@ -1,91 +1,159 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
+	"reflect"
+	"strings"
 )
 
-// Build-time variables injected via -ldflags
-var (
-	Version   = "dev"
-	BuildTime = "unknown"
-	GitCommit = "unknown"
-)
-
-type healthResponse struct {
-	Status    string `json:"status"`
-	Version   string `json:"version"`
-	BuildTime string `json:"build_time"`
-	GitCommit string `json:"git_commit"`
+// User is the demo struct used throughout this day's examples.
+type User struct {
+	Name  string `json:"name"`
+	Age   int    `json:"age"`
+	Email string `json:"email,omitempty"`
 }
 
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	resp := healthResponse{
-		Status:    "ok",
-		Version:   Version,
-		BuildTime: BuildTime,
-		GitCommit: GitCommit,
+// describe prints the type name, kind, and all fields (name / type / tag / value)
+// of any struct value passed as an interface{}.
+func describe(v interface{}) {
+	t := reflect.TypeOf(v)
+	val := reflect.ValueOf(v)
+
+	// Dereference pointer if needed
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+		val = val.Elem()
 	}
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		http.Error(w, "encoding error", http.StatusInternalServerError)
+
+	fmt.Printf("Type: %s\n", t.Name())
+	fmt.Printf("Kind: %s\n", t.Kind())
+
+	if t.Kind() != reflect.Struct {
+		fmt.Printf("Value: %v\n", val)
+		return
+	}
+
+	fmt.Printf("Fields (%d):\n", t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		fieldVal := val.Field(i)
+		fmt.Printf("  %-12s  type:%-10s  tag:%-30q  value:%v\n",
+			field.Name,
+			field.Type.Name(),
+			string(field.Tag),
+			fieldVal.Interface(),
+		)
 	}
 }
 
-func rootHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "Service Information\n")
-	fmt.Fprintf(w, "===================\n")
-	fmt.Fprintf(w, "Version:    %s\n", Version)
-	fmt.Fprintf(w, "Build Time: %s\n", BuildTime)
-	fmt.Fprintf(w, "Git Commit: %s\n", GitCommit)
+// DiffStructs returns the names of exported fields whose values differ between
+// two struct values of the same type. Both a and b must be structs (or pointers
+// to structs) of the same underlying type.
+func DiffStructs(a, b interface{}) []string {
+	ta := reflect.TypeOf(a)
+	va := reflect.ValueOf(a)
+	vb := reflect.ValueOf(b)
+
+	if ta.Kind() == reflect.Ptr {
+		ta = ta.Elem()
+		va = va.Elem()
+		vb = vb.Elem()
+	}
+
+	var diffs []string
+	for i := 0; i < ta.NumField(); i++ {
+		field := ta.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		fa := va.Field(i).Interface()
+		fb := vb.Field(i).Interface()
+		if !reflect.DeepEqual(fa, fb) {
+			diffs = append(diffs, field.Name)
+		}
+	}
+	return diffs
+}
+
+// CopyFields copies exported fields from src to dst by name, only when the
+// field type matches in both structs. dst must be a pointer to a struct.
+func CopyFields(dst, src interface{}) {
+	srcType := reflect.TypeOf(src)
+	srcVal := reflect.ValueOf(src)
+	dstVal := reflect.ValueOf(dst)
+
+	if srcType.Kind() == reflect.Ptr {
+		srcType = srcType.Elem()
+		srcVal = srcVal.Elem()
+	}
+	if dstVal.Kind() != reflect.Ptr {
+		panic("CopyFields: dst must be a pointer")
+	}
+	dstVal = dstVal.Elem()
+	dstType := dstVal.Type()
+
+	for i := 0; i < srcType.NumField(); i++ {
+		srcField := srcType.Field(i)
+		if !srcField.IsExported() {
+			continue
+		}
+		dstField, ok := dstType.FieldByName(srcField.Name)
+		if !ok {
+			continue
+		}
+		if dstField.Type != srcField.Type {
+			continue
+		}
+		dstVal.FieldByName(srcField.Name).Set(srcVal.Field(i))
+	}
 }
 
 func main() {
-	addr := ":8080"
-	if port := os.Getenv("PORT"); port != "" {
-		addr = ":" + port
+	fmt.Println("=== Day 28: Reflection ===")
+	fmt.Println()
+
+	// ── describe ─────────────────────────────────────────────────────────────
+	fmt.Println("--- describe(User{...}) ---")
+	u := User{Name: "Alice", Age: 30, Email: "alice@example.com"}
+	describe(u)
+
+	fmt.Println()
+	fmt.Println("--- describe(&User{...}) (pointer) ---")
+	describe(&u)
+
+	// ── DiffStructs ──────────────────────────────────────────────────────────
+	fmt.Println()
+	fmt.Println("--- DiffStructs ---")
+	u1 := User{Name: "Alice", Age: 30, Email: "alice@example.com"}
+	u2 := User{Name: "Alice", Age: 31, Email: "alice@new.com"}
+	diffs := DiffStructs(u1, u2)
+	fmt.Printf("Fields that differ: %s\n", strings.Join(diffs, ", "))
+
+	u3 := User{Name: "Alice", Age: 30, Email: "alice@example.com"}
+	diffs2 := DiffStructs(u1, u3)
+	if len(diffs2) == 0 {
+		fmt.Println("No differences (identical structs)")
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/", rootHandler)
+	// ── CopyFields ───────────────────────────────────────────────────────────
+	fmt.Println()
+	fmt.Println("--- CopyFields ---")
+	src := User{Name: "Bob", Age: 25, Email: "bob@example.com"}
+	var dst User
+	CopyFields(&dst, src)
+	fmt.Printf("After CopyFields: %+v\n", dst)
 
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+	// Partial copy – only Name and Age exist in target
+	type Partial struct {
+		Name string
+		Age  int
 	}
+	var p Partial
+	CopyFields(&p, src)
+	fmt.Printf("After CopyFields into Partial: %+v\n", p)
 
-	// Start server in background
-	go func() {
-		log.Printf("Server starting on %s (version=%s commit=%s built=%s)",
-			addr, Version, GitCommit, BuildTime)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("ListenAndServe: %v", err)
-		}
-	}()
-
-	// Wait for interrupt signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	log.Println("Shutdown signal received, draining connections...")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Graceful shutdown failed: %v", err)
-	}
-	log.Println("Server stopped cleanly.")
+	// ── reflect on a non-struct ───────────────────────────────────────────────
+	fmt.Println()
+	fmt.Println("--- describe(42) ---")
+	describe(42)
 }

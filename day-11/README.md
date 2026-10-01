@@ -1,403 +1,405 @@
-# Day 11: Standard Library Collections
+# Day 11: Generics
 
-## Sorting
+## Core Concept: Type Parameters
 
-Go's [`sort`](https://pkg.go.dev/sort) package sorts slices in-place.
-
-```go
-// Concrete helpers
-sort.Ints([]int{3,1,2})
-sort.Strings([]string{"c","a","b"})
-
-// Generic — works on any slice with a comparator
-sort.Slice(people, func(i, j int) bool {
-    return people[i].Age < people[j].Age
-})
-
-// Binary search on sorted slice
-i := sort.SearchInts(sorted, target)
-// i is the insertion point; check sorted[i] == target
-
-// Custom type implementing sort.Interface
-type ByLength []string
-func (b ByLength) Len() int           { return len(b) }
-func (b ByLength) Less(i, j int) bool { return len(b[i]) < len(b[j]) }
-func (b ByLength) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
-sort.Sort(ByLength(words))
-```
-
-## [container/heap](https://pkg.go.dev/container/heap) — Priority Queue
-
-Implement `heap.Interface` on a slice:
+Generics (added in Go 1.18) let you write functions and types that work over multiple types while remaining type-safe.
 
 ```go
-type MinIntHeap []int
-func (h MinIntHeap) Len() int           { return len(h) }
-func (h MinIntHeap) Less(i, j int) bool { return h[i] < h[j] }
-func (h MinIntHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *MinIntHeap) Push(x any)        { *h = append(*h, x.(int)) }
-func (h *MinIntHeap) Pop() any {
-    old := *h; n := len(old); x := old[n-1]; *h = old[:n-1]; return x
-}
-
-h := &MinIntHeap{3, 1, 4, 1, 5}
-heap.Init(h)
-heap.Push(h, 2)
-fmt.Println(heap.Pop(h)) // 1
-```
-
-## [container/list](https://pkg.go.dev/container/list) — Doubly Linked List
-
-```go
-l := list.New()
-e1 := l.PushBack("first")
-e2 := l.PushBack("second")
-l.InsertAfter("middle", e1)
-l.Remove(e2)
-
-for e := l.Front(); e != nil; e = e.Next() {
-    fmt.Println(e.Value)
-}
-```
-
-## Graph — Adjacency List
-
-```go
-type Graph[T comparable] map[T][]T
-
-func (g Graph[T]) AddEdge(from, to T) {
-    g[from] = append(g[from], to)
-}
-
-func (g Graph[T]) BFS(start T) []T {
-    visited := map[T]bool{start: true}
-    queue   := []T{start}
-    result  := []T{}
-    for len(queue) > 0 {
-        node := queue[0]; queue = queue[1:]
-        result = append(result, node)
-        for _, nb := range g[node] {
-            if !visited[nb] {
-                visited[nb] = true
-                queue = append(queue, nb)
-            }
-        }
+func Map[T, U any](s []T, f func(T) U) []U {
+    result := make([]U, len(s))
+    for i, v := range s {
+        result[i] = f(v)
     }
     return result
 }
+
+doubled := Map([]int{1, 2, 3}, func(x int) int { return x * 2 })
+upper   := Map([]string{"a","b"}, strings.ToUpper)
 ```
+
+## Constraints
+
+A constraint is an interface that restricts which types a type parameter may be:
+
+```go
+// comparable — supports == and !=
+func Contains[T comparable](s []T, v T) bool { ... }
+
+// Built-in constraint from golang.org/x/exp/constraints or defined inline:
+type Number interface {
+    int | int8 | int16 | int32 | int64 |
+    float32 | float64
+}
+
+func Sum[T Number](s []T) T {
+    var total T
+    for _, v := range s { total += v }
+    return total
+}
+```
+
+The `~` prefix means "any type whose underlying type is T":
+
+```go
+type Celsius float64
+
+type Temperature interface { ~float64 }
+
+func Max[T Temperature](a, b T) T { if a > b { return a }; return b }
+// Now works with both float64 and Celsius
+```
+
+## Generic Types
+
+```go
+type Stack[T any] struct {
+    items []T
+}
+
+func (s *Stack[T]) Push(v T)        { s.items = append(s.items, v) }
+func (s *Stack[T]) Pop() (T, bool) {
+    if len(s.items) == 0 {
+        var zero T; return zero, false
+    }
+    top := s.items[len(s.items)-1]
+    s.items = s.items[:len(s.items)-1]
+    return top, true
+}
+func (s *Stack[T]) Peek() (T, bool) { ... }
+func (s *Stack[T]) Len() int        { return len(s.items) }
+```
+
+## When to Use Generics vs Interfaces
+
+- Use **generics** when the algorithm is the same for all types and you need type safety at the call site
+- Use **interfaces** when behaviour differs per type (polymorphism)
+- A function that only needs `any` does not benefit from generics
 
 ## Labs
 
-### Lab 1: Min-Heap with `container/heap`
+### Lab 1: Generic `Min` and `Max`
 
-**What you'll practise:** implementing `heap.Interface` on a custom type and using `heap.Init`, `heap.Push`, and `heap.Pop`.
-
-**Task:**
-Create a min-heap of ints. Push 10 random numbers into it, then pop them all and verify they emerge in ascending sorted order.
-
-**Steps:**
-1. Define `type MinIntHeap []int`
-2. Implement `Len`, `Less`, `Swap`, `Push`, and `Pop` so that `Less(i,j)` returns `h[i] < h[j]`
-3. Call `heap.Init` on an existing slice, then push additional elements with `heap.Push`
-4. Pop all elements into a result slice and check it is sorted
-
-```go
-import "container/heap"
-
-type MinIntHeap []int
-
-func (h MinIntHeap) Len() int           { return len(h) }
-func (h MinIntHeap) Less(i, j int) bool { return h[i] < h[j] }
-func (h MinIntHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-
-func (h *MinIntHeap) Push(x any) { *h = append(*h, x.(int)) }
-
-func (h *MinIntHeap) Pop() any {
-    old := *h; n := len(old)
-    x := old[n-1]; *h = old[:n-1]
-    return x
-}
-```
-
-**Expected output:**
-```
-Sorted: [1 2 3 4 5 6 7 8 9 10]
-```
-
-**Checkpoint:** Elements popped from the heap are in non-decreasing order regardless of the push order.
-
----
-
-### Lab 2: Max-Heap — Top-3 Largest
-
-**What you'll practise:** inverting the `Less` comparator to convert a min-heap into a max-heap.
+**What you'll practise:** writing a generic function with an `Ordered` constraint and calling it with multiple types.
 
 **Task:**
-Create a max-heap by changing only the `Less` method. Use it to find the three largest numbers in a `[]int` without sorting the entire slice.
+Write `Min[T constraints.Ordered](a, b T) T` and `Max[T constraints.Ordered](a, b T) T`. Call each with `int`, `float64`, and `string` to confirm the type parameter is inferred correctly.
 
 **Steps:**
-1. Define `type MaxIntHeap []int` and implement `heap.Interface` with `Less(i,j)` returning `h[i] > h[j]`
-2. Push all numbers from the input slice into the max-heap via `heap.Push`
-3. Pop three times — the three returned values are the three largest
-4. Verify against the expected top-3
+1. Import `"cmp"` (Go 1.21+) or define your own `Ordered` constraint using `~int | ~float64 | ~string | ...`
+2. Implement `Min` returning the smaller of two values
+3. Implement `Max` returning the larger of two values
+4. In `main`, call both with at least three different types
 
 ```go
-type MaxIntHeap []int
+// Using the built-in cmp package (Go 1.21+)
+import "cmp"
 
-func (h MaxIntHeap) Len() int           { return len(h) }
-func (h MaxIntHeap) Less(i, j int) bool { return h[i] > h[j] } // inverted
-func (h MaxIntHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *MaxIntHeap) Push(x any)        { *h = append(*h, x.(int)) }
-func (h *MaxIntHeap) Pop() any {
-    old := *h; n := len(old)
-    x := old[n-1]; *h = old[:n-1]
-    return x
-}
-
-nums := []int{3, 1, 4, 1, 5, 9, 2, 6, 5, 3}
-h := MaxIntHeap(append([]int{}, nums...))
-heap.Init(&h)
-top3 := []int{heap.Pop(&h).(int), heap.Pop(&h).(int), heap.Pop(&h).(int)}
-```
-
-**Expected output:**
-```
-Top-3: [9 6 5]
-```
-
-**Checkpoint:** The result is `[9, 6, 5]` for any ordering of the input. Only three pops are needed regardless of slice size.
-
----
-
-### Lab 3: LRU Cache with `container/list`
-
-**What you'll practise:** combining `container/list` for ordering with a `map` for O(1) lookup to build an LRU cache.
-
-**Task:**
-Implement an `LRUCache` with `Get(key string) (string, bool)` and `Set(key, value string)`. The cache has a fixed capacity; setting a new key when full evicts the least-recently-used entry.
-
-**Steps:**
-1. Define `type LRUCache struct { cap int; list *list.List; items map[string]*list.Element }`
-2. Each list element stores a `entry{key, value string}` pair
-3. `Get`: if found, move element to front and return value; else return `"", false`
-4. `Set`: if key exists update and move to front; else push to front and evict the back element when over capacity
-5. Write a test: create a capacity-2 cache, set 3 keys, verify the first is evicted
-
-```go
-import "container/list"
-
-type entry struct{ key, value string }
-
-type LRUCache struct {
-    cap   int
-    list  *list.List
-    items map[string]*list.Element
-}
-
-func NewLRUCache(cap int) *LRUCache {
-    return &LRUCache{cap: cap, list: list.New(), items: make(map[string]*list.Element)}
-}
-
-func (c *LRUCache) Get(key string) (string, bool) {
-    if el, ok := c.items[key]; ok {
-        c.list.MoveToFront(el)
-        return el.Value.(*entry).value, true
+func Min[T cmp.Ordered](a, b T) T {
+    if a < b {
+        return a
     }
-    return "", false
+    return b
+}
+
+func Max[T cmp.Ordered](a, b T) T {
+    if a > b {
+        return a
+    }
+    return b
 }
 ```
 
 **Expected output:**
 ```
-Get("a"): "", false   (evicted)
-Get("b"): "B", true
-Get("c"): "C", true
+Min(3, 7) = 3
+Min(3.14, 2.71) = 2.71
+Min("banana", "apple") = apple
+Max(3, 7) = 7
 ```
 
-**Checkpoint:** After setting keys a, b, c (capacity 2), `Get("a")` returns `false` and both `Get("b")` and `Get("c")` return their values.
+**Checkpoint:** The compiler infers the type parameter without explicit instantiation (`Min(3, 7)` not `Min[int](3, 7)`).
 
 ---
 
-### Lab 4: Circular Buffer with `container/ring`
+### Lab 2: Generic `Stack[T any]`
 
-**What you'll practise:** using `container/ring` for a fixed-size circular buffer that overwrites the oldest element.
+**What you'll practise:** generic types — a parameterised struct with multiple methods.
 
 **Task:**
-Create a circular buffer of capacity 5 using `ring.New(5)`. Write 10 values into it and show that only the last 5 survive. Then implement a sliding-window maximum over a stream of integers.
+Implement `Stack[T any]` with `Push(v T)`, `Pop() (T, bool)`, `Peek() (T, bool)`, `Len() int`, and `IsEmpty() bool`. Test it with both `int` and `string`.
 
 **Steps:**
-1. Create `r := ring.New(5)` — a ring of 5 elements
-2. Write values 1–10 into it, advancing `r = r.Next()` on each write
-3. After all writes, iterate the ring with `r.Do` and print surviving values
-4. Reset and implement `slidingMax(nums []int, k int) []int` using the ring to track a window
+1. Declare `type Stack[T any] struct { items []T }`
+2. Implement all five methods; `Pop` and `Peek` must return `(T, bool)` — return the zero value and `false` when empty
+3. Write a test that pushes three ints, peeks, pops all three, and verifies order is LIFO
+4. Write a second test using `string`
 
 ```go
-import "container/ring"
-
-r := ring.New(5)
-for i := 1; i <= 10; i++ {
-    r.Value = i
-    r = r.Next()
+type Stack[T any] struct {
+    items []T
 }
 
-// Print surviving values (6,7,8,9,10):
-r.Do(func(v any) {
-    fmt.Println(v)
+func (s *Stack[T]) Push(v T) { s.items = append(s.items, v) }
+
+func (s *Stack[T]) Pop() (T, bool) {
+    if len(s.items) == 0 {
+        var zero T
+        return zero, false
+    }
+    top := s.items[len(s.items)-1]
+    s.items = s.items[:len(s.items)-1]
+    return top, true
+}
+
+func (s *Stack[T]) Peek() (T, bool) {
+    if len(s.items) == 0 {
+        var zero T
+        return zero, false
+    }
+    return s.items[len(s.items)-1], true
+}
+
+func (s *Stack[T]) Len() int    { return len(s.items) }
+func (s *Stack[T]) IsEmpty() bool { return len(s.items) == 0 }
+```
+
+**Expected output:**
+```
+Pushed: 1, 2, 3
+Peek: 3 (len=3)
+Pop: 3, 2, 1
+IsEmpty: true
+```
+
+**Checkpoint:** `Pop` on an empty stack returns `(zero, false)` without panicking.
+
+---
+
+### Lab 3: Generic `Queue[T any]`
+
+**What you'll practise:** a FIFO generic type implemented as a slice — understanding head-index vs re-slicing tradeoffs.
+
+**Task:**
+Implement `Queue[T any]` with `Enqueue(v T)`, `Dequeue() (T, bool)`, `Front() (T, bool)`, `Len() int`, and `IsEmpty() bool`.
+
+**Steps:**
+1. Declare `type Queue[T any] struct { items []T }`
+2. `Enqueue` appends to the back; `Dequeue` removes from the front using re-slicing
+3. Write a test: enqueue 5 items, dequeue 3, verify FIFO order and remaining `Len()`
+4. Confirm `Dequeue` on an empty queue returns `(zero, false)`
+
+```go
+type Queue[T any] struct {
+    items []T
+}
+
+func (q *Queue[T]) Enqueue(v T) { q.items = append(q.items, v) }
+
+func (q *Queue[T]) Dequeue() (T, bool) {
+    if len(q.items) == 0 {
+        var zero T
+        return zero, false
+    }
+    front := q.items[0]
+    q.items = q.items[1:]
+    return front, true
+}
+
+func (q *Queue[T]) Front() (T, bool) {
+    if len(q.items) == 0 {
+        var zero T
+        return zero, false
+    }
+    return q.items[0], true
+}
+
+func (q *Queue[T]) Len() int     { return len(q.items) }
+func (q *Queue[T]) IsEmpty() bool { return len(q.items) == 0 }
+```
+
+**Expected output:**
+```
+Enqueued: a, b, c, d, e
+Dequeue: a, b, c
+Remaining: 2  Front: d
+```
+
+**Checkpoint:** Dequeue returns items in FIFO order; `Len()` decrements correctly after each dequeue.
+
+---
+
+### Lab 4: `Filter` and `Map`
+
+**What you'll practise:** generic higher-order functions that work with any slice type.
+
+**Task:**
+Write `Filter[T any](slice []T, pred func(T) bool) []T` and `Map[T, U any](slice []T, f func(T) U) []U`. Demonstrate each with at least two different type combinations.
+
+**Steps:**
+1. Implement `Filter` — return a new slice containing only elements for which `pred` returns true
+2. Implement `Map` — apply `f` to every element and return the result slice
+3. Use `Filter` to keep only even ints from `[]int{1,2,3,4,5,6}`
+4. Use `Map` to convert `[]string{"hello","world"}` to `[]int` of lengths
+5. Chain them: filter a string slice to words longer than 3 chars, then map to uppercase
+
+```go
+func Filter[T any](slice []T, pred func(T) bool) []T {
+    var out []T
+    for _, v := range slice {
+        if pred(v) {
+            out = append(out, v)
+        }
+    }
+    return out
+}
+
+func Map[T, U any](slice []T, f func(T) U) []U {
+    out := make([]U, len(slice))
+    for i, v := range slice {
+        out[i] = f(v)
+    }
+    return out
+}
+```
+
+**Expected output:**
+```
+Even ints: [2 4 6]
+Word lengths: [5 5]
+Long+Upper: [HELLO WORLD]
+```
+
+**Checkpoint:** Neither function allocates an output slice when the input is empty.
+
+---
+
+### Lab 5: `Reduce`
+
+**What you'll practise:** a generic accumulator that transforms a slice into a single value using an initial value and a combining function.
+
+**Task:**
+Write `Reduce[T, U any](slice []T, initial U, f func(U, T) U) U`. Use it to sum a `[]int`, find the maximum, and concatenate a `[]string`.
+
+**Steps:**
+1. Implement `Reduce` iterating over `slice`, updating an accumulator with `f(acc, v)`
+2. Use it with `func(acc, v int) int { return acc + v }` to sum `[]int{1,2,3,4,5}`
+3. Use it to find the max of `[]int{3,1,4,1,5,9,2,6}`
+4. Use it to concatenate `[]string{"Go","is","fun"}` into `"Go is fun"`
+
+```go
+func Reduce[T, U any](slice []T, initial U, f func(U, T) U) U {
+    acc := initial
+    for _, v := range slice {
+        acc = f(acc, v)
+    }
+    return acc
+}
+
+// Sum
+sum := Reduce([]int{1, 2, 3, 4, 5}, 0, func(acc, v int) int { return acc + v })
+
+// Join strings
+joined := Reduce([]string{"Go", "is", "fun"}, "", func(acc, v string) string {
+    if acc == "" { return v }
+    return acc + " " + v
 })
 ```
 
 **Expected output:**
 ```
-Ring contents after 10 writes: [6 7 8 9 10]
+Sum: 15
+Max: 9
+Joined: Go is fun
 ```
 
-**Checkpoint:** After writing values 1–10 to a capacity-5 ring, exactly values 6–10 remain.
+**Checkpoint:** `Reduce` on an empty slice returns `initial` unchanged.
 
 ---
 
-### Lab 5: Graph — BFS Shortest Path
+### Lab 6: Type Constraint — `Number` and `Sum`
 
-**What you'll practise:** representing a graph with an adjacency list and implementing BFS to find the shortest path between two nodes.
+**What you'll practise:** defining a custom type constraint with the `~` underlying-type prefix and writing a numeric generic function.
 
 **Task:**
-Define `type Graph map[string][]string`. Add `AddEdge`, `Neighbours`, and `BFS(start, end string) []string` returning the shortest path as a node slice.
+Define a `Number` constraint covering all integer and float types using `~` prefixes. Write `Sum[T Number](slice []T) T` and verify it works with `int`, `float64`, and a custom `type Celsius float64`.
 
 **Steps:**
-1. Implement `AddEdge(from, to string)` — directed edge (also add reverse for undirected)
-2. Implement `BFS` using a queue and a `prev map[string]string` to reconstruct the path
-3. Build a test graph: A→B, A→C, B→D, C→D, D→E
-4. Find the shortest path from A to E and verify it is length 3 (A→B→D→E or A→C→D→E)
+1. Define `type Number interface { ~int | ~int32 | ~int64 | ~float32 | ~float64 }`
+2. Implement `Sum[T Number](slice []T) T` using a zero value and accumulation
+3. Test with `[]int{1,2,3}`, `[]float64{1.1, 2.2}`, and `[]Celsius{98.6, 37.0}`
+4. Try removing the `~` and observe the compile error with `Celsius` — then restore it
 
 ```go
-type Graph map[string][]string
-
-func (g Graph) AddEdge(from, to string) {
-    g[from] = append(g[from], to)
+type Number interface {
+    ~int | ~int32 | ~int64 | ~float32 | ~float64
 }
 
-func (g Graph) BFS(start, end string) []string {
-    prev := map[string]string{start: ""}
-    queue := []string{start}
-    for len(queue) > 0 {
-        node := queue[0]; queue = queue[1:]
-        if node == end {
-            return buildPath(prev, start, end)
-        }
-        for _, nb := range g[node] {
-            if _, seen := prev[nb]; !seen {
-                prev[nb] = node
-                queue = append(queue, nb)
-            }
-        }
+func Sum[T Number](slice []T) T {
+    var total T
+    for _, v := range slice {
+        total += v
     }
-    return nil // no path
+    return total
 }
+
+type Celsius float64
+
+// These all compile because of the ~ prefix:
+fmt.Println(Sum([]int{1, 2, 3}))           // 6
+fmt.Println(Sum([]float64{1.1, 2.2, 3.3})) // 6.6
+fmt.Println(Sum([]Celsius{98.6, 37.0}))    // 135.6
 ```
 
 **Expected output:**
 ```
-BFS A→E: [A B D E]
-BFS A→C: [A C]
-BFS E→A: []  (directed — no path)
+int sum: 6
+float64 sum: 6.6
+Celsius sum: 135.6
 ```
 
-**Checkpoint:** `BFS` returns the path with the fewest hops. Unreachable nodes return `nil`.
+**Checkpoint:** `Sum` works with a named type whose underlying type is in the constraint. Removing `~` causes a compile error for `Celsius`.
 
 ---
 
-### Lab 6: DFS and `HasPath`
+### Final Lab (Project): Generic Stack, Queue, Filter, Map, Reduce
 
-**What you'll practise:** recursive DFS traversal and cycle detection using a visited set.
+**What you'll practise:** assembling all generic building blocks into a complete, tested data-structures package.
 
 **Task:**
-Add `DFS(start string) []string` returning nodes in DFS traversal order, and `HasPath(from, to string) bool` that returns true if any path exists between two nodes.
+Implement and test the full generic toolkit: `Stack[T]`, `Queue[T]`, `Filter`, `Map`, `Reduce`, and the `Number`/`Sum` utilities. Wire them together in a `main` that demonstrates a realistic pipeline.
 
 **Steps:**
-1. Implement `DFS` recursively, tracking visited nodes in a `map[string]bool`
-2. Implement `HasPath` using DFS or BFS — return true as soon as `to` is reached
-3. Use the same A→B, A→C, B→D, C→D, D→E graph
-4. Add a cycle (E→A) and verify DFS terminates without infinite recursion
+1. Implement `Stack[T any]` — LIFO with `Push`, `Pop`, `Peek`, `Len`, `IsEmpty`
+2. Implement `Queue[T any]` — FIFO with `Enqueue`, `Dequeue`, `Front`, `Len`, `IsEmpty`
+3. Implement generic `Filter[T any]`, `Map[T, U any]`, `Reduce[T, U any]`
+4. Write tests for each using at least two different type instantiations
+5. In `main`, demonstrate a pipeline: load words into a `Queue`, filter long ones, map to uppercase, reduce to a single string
 
 ```go
-func (g Graph) DFS(start string) []string {
-    var result []string
-    visited := make(map[string]bool)
-    var dfs func(node string)
-    dfs = func(node string) {
-        if visited[node] { return }
-        visited[node] = true
-        result = append(result, node)
-        for _, nb := range g[node] {
-            dfs(nb)
-        }
-    }
-    dfs(start)
-    return result
-}
-
-func (g Graph) HasPath(from, to string) bool {
-    return g.BFS(from, to) != nil
-}
+words := []string{"go", "generics", "are", "powerful", "and", "elegant"}
+long  := Filter(words, func(w string) bool { return len(w) > 3 })
+upper := Map(long, strings.ToUpper)
+result := Reduce(upper, "", func(acc, w string) string {
+    if acc == "" { return w }
+    return acc + " " + w
+})
+fmt.Println(result)
 ```
 
 **Expected output:**
 ```
-DFS from A: [A B D E C]
-HasPath(A, E): true
-HasPath(E, B): false
+GENERICS ARE POWERFUL ELEGANT
 ```
 
-**Checkpoint:** `DFS` visits every reachable node exactly once; adding a cycle (E→A) does not cause infinite recursion.
+**Checkpoint:** `go test ./...` passes; every generic function is exercised with at least two type parameters in tests.
 
----
-
-### Final Lab (Project): Data Structures Library
-
-**What you'll practise:** combining all six labs into a tested, production-quality data structures library with a min-heap, LRU cache, and a BFS/DFS graph.
-
-**Task:**
-Implement and test the full data structures library. Each structure should have its own file and comprehensive tests.
-
-**Steps:**
-1. Implement a min-heap priority queue wrapping [`container/heap`](https://pkg.go.dev/container/heap)
-2. Implement an LRU cache using [`container/list`](https://pkg.go.dev/container/list) + `map` (O(1) `Get` and `Set`)
-3. Implement a generic `Graph[T comparable]` with `AddEdge`, `BFS`, `DFS`, `HasPath`
-4. Write table-driven tests for each data structure
-
-```go
-// Example usage in main:
-h := &MinIntHeap{5, 3, 8, 1}
-heap.Init(h)
-fmt.Println(heap.Pop(h)) // 1
-
-cache := NewLRUCache(3)
-cache.Set("x", "10")
-v, _ := cache.Get("x")
-fmt.Println(v) // 10
-
-g := make(Graph[string])
-g.AddEdge("A", "B"); g.AddEdge("B", "C")
-fmt.Println(g.BFS("A", "C")) // [A B C]
-```
-
-**Expected output:**
-```
-MinHeap pop sequence: 1 3 5 8
-LRU eviction works correctly
-BFS path: [A B C]
-DFS traversal: [A B C]
-```
-
-**Checkpoint:** `go test ./...` passes; all three data structures have at least 3 test cases each; `go vet ./...` is clean.
-
-**Extension ideas:** implement Dijkstra's shortest-path on a weighted graph using `container/heap`.
+**Extension ideas:** implement a `Set[T comparable]` with `Add`, `Contains`, `Remove`, `Union`, `Intersection`.
 
 ## Official Documentation
 
-- [`sort`](https://pkg.go.dev/sort) — Ints, Strings, Slice, Sort, SearchInts, sort.Interface
-- [`container/heap`](https://pkg.go.dev/container/heap) — heap.Interface, Init, Push, Pop
-- [`container/list`](https://pkg.go.dev/container/list) — doubly linked list operations
-- [`container/ring`](https://pkg.go.dev/container/ring) — circular list (related container)
-- [`fmt`](https://pkg.go.dev/fmt) — formatted output
-- [Go Blog: The Go Programming Language Specification — Generics](https://go.dev/blog/intro-generics) — for the generic Graph type
+- [`strings`](https://pkg.go.dev/strings) — `ToUpper` and other functions used in generic examples
+- [Language Spec: Type parameters](https://go.dev/ref/spec#Type_parameter_declarations) — type parameter syntax
+- [Language Spec: Type constraints](https://go.dev/ref/spec#Interface_types) — constraint interfaces
+- [Go Blog: An Introduction to Generics](https://go.dev/blog/intro-generics) — overview of Go generics
+- [Go Blog: When to use generics](https://go.dev/blog/when-generics) — guidance on generics vs interfaces
+- [Go Tour: Generics](https://go.dev/tour/generics/1) — interactive generics tour

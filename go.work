@@ -1,6 +1,12 @@
 go 1.23
 
 use (
+	./capstone/chat-server
+	./capstone/grep
+	./capstone/kvdb
+	./capstone/passgen
+	./capstone/todo-api
+	./capstone/url-shortener
 	./day-01
 	./day-02
 	./day-03
@@ -36,10 +42,4 @@ use (
 	./day-33
 	./day-34
 	./day-35
-	./capstone/grep
-	./capstone/passgen
-	./capstone/todo-api
-	./capstone/url-shortener
-	./capstone/chat-server
-	./capstone/kvdb
 )

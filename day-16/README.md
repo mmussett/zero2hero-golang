@@ -1,482 +1,498 @@
-# Day 16: Sync Primitives
+# Day 16: Goroutines and Channels
 
-## Core Concept: Shared Memory Requires Explicit Synchronisation
+## Core Concept: Communicating Sequential Processes
 
-Channels are great for ownership transfer and signalling. When goroutines genuinely need to share mutable state, reach for the [`sync`](https://pkg.go.dev/sync) package.
+Go's concurrency is based on CSP: goroutines are lightweight independently-executing functions; channels are typed conduits for communication between them.
 
-## [sync.Mutex](https://pkg.go.dev/sync#Mutex)
+> "Do not communicate by sharing memory; share memory by communicating."
 
-```go
-type SafeCounter struct {
-    mu sync.Mutex
-    n  int
-}
+## Goroutines
 
-func (c *SafeCounter) Inc() {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    c.n++
-}
-
-func (c *SafeCounter) Value() int {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    return c.n
-}
-```
-
-Always `defer mu.Unlock()` immediately after `Lock()` — even if the function panics, the mutex will be released.
-
-## [sync.RWMutex](https://pkg.go.dev/sync#RWMutex)
-
-Allows multiple concurrent readers or one writer — better throughput for read-heavy workloads:
+A goroutine is started with the `go` keyword. It is not a thread — the Go runtime multiplexes thousands of goroutines onto a small number of OS threads.
 
 ```go
-var mu sync.RWMutex
-
-func read() {
-    mu.RLock()
-    defer mu.RUnlock()
-    // concurrent reads are safe
-}
-
-func write() {
-    mu.Lock()
-    defer mu.Unlock()
-    // exclusive write
-}
+go func() {
+    fmt.Println("running concurrently")
+}()
+// main does not wait — need to synchronise
 ```
 
-## [sync.WaitGroup](https://pkg.go.dev/sync#WaitGroup)
-
-Wait for a collection of goroutines to finish:
+## Channels
 
 ```go
-var wg sync.WaitGroup
-for i := 0; i < 10; i++ {
-    wg.Add(1)
-    go func(id int) {
-        defer wg.Done()
-        doWork(id)
-    }(i)
-}
-wg.Wait()
+ch := make(chan int)      // unbuffered — sender blocks until receiver is ready
+ch := make(chan int, 10)  // buffered — sender blocks only when full
+
+ch <- 42          // send
+v := <-ch         // receive
+v, ok := <-ch     // ok is false when channel is closed and empty
+close(ch)         // signal no more values
 ```
 
-Always call `Add` before launching the goroutine, never inside it.
-
-## [sync.Once](https://pkg.go.dev/sync#Once)
-
-Run an initialisation exactly once, regardless of how many goroutines call it:
+`range` over a channel receives until closed:
 
 ```go
-var (
-    instance *DB
-    once     sync.Once
-)
-
-func GetDB() *DB {
-    once.Do(func() {
-        instance = connect()
-    })
-    return instance
+for v := range ch {
+    fmt.Println(v)
 }
 ```
 
-## [sync/atomic](https://pkg.go.dev/sync/atomic)
+## select
 
-Low-level, lock-free operations on primitive integers and pointers:
+`select` waits on multiple channel operations — like a switch for channels:
 
 ```go
-var hits int64
-atomic.AddInt64(&hits, 1)
-n := atomic.LoadInt64(&hits)
+select {
+case msg := <-ch1:
+    fmt.Println("ch1:", msg)
+case msg := <-ch2:
+    fmt.Println("ch2:", msg)
+case <-time.After(1 * time.Second):
+    fmt.Println("timeout")
+}
 ```
 
-Use `atomic` only for simple counters and flags — prefer `Mutex` for anything more complex.
+## Fan-Out / Fan-In
 
-## Race Detector
+```go
+// Fan-out: distribute work across N workers
+func fanOut(in <-chan string, n int) []<-chan string {
+    outs := make([]<-chan string, n)
+    for i := range outs {
+        outs[i] = worker(in)
+    }
+    return outs
+}
 
-Always run tests with `-race` during development:
-
-```bash
-go test -race ./...
-go run -race main.go
+// Fan-in: merge multiple channels into one
+func merge(channels ...<-chan string) <-chan string {
+    out := make(chan string)
+    var wg sync.WaitGroup
+    for _, ch := range channels {
+        wg.Add(1)
+        go func(c <-chan string) {
+            defer wg.Done()
+            for v := range c { out <- v }
+        }(ch)
+    }
+    go func() { wg.Wait(); close(out) }()
+    return out
+}
 ```
 
-The race detector catches concurrent access to unprotected shared data.
+## Done Channel (Cancellation)
+
+```go
+done := make(chan struct{})
+go func() {
+    select {
+    case <-done:
+        return
+    case result := <-work:
+        process(result)
+    }
+}()
+close(done) // signal all goroutines to stop
+```
 
 ## Labs
 
-### Lab 1: Race Condition — Bare Counter
+### Lab 1: First Goroutine — sync.WaitGroup
 
-**What you'll practise:** Witnessing a data race that the race detector catches.
-
-**Task:**
-Increment a shared `int` counter from 100 goroutines without any synchronisation. Run with `go test -race` and observe the race report. Note the exact lines flagged.
-
-**Steps:**
-1. Declare `var counter int` at package level (or closure-captured)
-2. Launch 100 goroutines each doing `counter++` 1 000 times
-3. Wait for all with `sync.WaitGroup`, print `counter`
-4. Run `go run -race main.go` and read the DATA RACE report
-
-```go
-var counter int
-var wg sync.WaitGroup
-
-for i := 0; i < 100; i++ {
-    wg.Add(1)
-    go func() {
-        defer wg.Done()
-        for j := 0; j < 1000; j++ {
-            counter++ // RACE
-        }
-    }()
-}
-wg.Wait()
-fmt.Println(counter) // likely < 100000
-```
-
-**Expected output:**
-```
-==================
-WARNING: DATA RACE
-Write at 0x... by goroutine 7:
-  main.main.func1()
-...
-```
-
-**Checkpoint:** The race detector reports at least one DATA RACE on `counter`.
-
----
-
-### Lab 2: sync.Mutex — Fix the Race
-
-**What you'll practise:** Protecting shared state with `sync.Mutex` to eliminate data races.
+**What you'll practise:** Launching goroutines and using `sync.WaitGroup` to wait for them all.
 
 **Task:**
-Take the racy counter from Lab 1 and protect it with a `sync.Mutex`. Verify with `go run -race` that the race is gone and the final count is exactly 100 000.
+Launch 5 goroutines, each printing its number. First observe the non-deterministic output without synchronisation. Then add a `sync.WaitGroup` so `main` waits for all goroutines to finish.
 
 **Steps:**
-1. Create `type SafeCounter struct { mu sync.Mutex; n int }`
-2. Add `Inc()` and `Value()` methods, each using `mu.Lock() / defer mu.Unlock()`
-3. Replace bare `counter++` with `sc.Inc()`
-4. Run with `-race` — confirm no races; confirm `sc.Value() == 100000`
-
-```go
-type SafeCounter struct {
-    mu sync.Mutex
-    n  int
-}
-
-func (c *SafeCounter) Inc() {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    c.n++
-}
-
-func (c *SafeCounter) Value() int {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    return c.n
-}
-```
-
-**Expected output:**
-```
-100000
-(no DATA RACE warning)
-```
-
-**Checkpoint:** `go run -race main.go` exits 0 with final counter exactly 100 000.
-
----
-
-### Lab 3: sync.RWMutex — Read-Heavy Cache
-
-**What you'll practise:** Using `RWMutex` to allow concurrent reads while serialising writes.
-
-**Task:**
-Build an in-memory string cache backed by a `map[string]string`. Start 10 reader goroutines and 1 writer goroutine. Show that `RWMutex` outperforms a plain `Mutex` by running both versions with `go test -bench`.
-
-**Steps:**
-1. Implement `type Cache struct { mu sync.RWMutex; m map[string]string }`
-2. Add `Get(key string) (string, bool)` using `RLock/RUnlock`
-3. Add `Set(key, value string)` using `Lock/Unlock`
-4. Write `BenchmarkCacheRWMutex` (10 readers, 1 writer goroutine) and `BenchmarkCacheMutex` (same but `sync.Mutex`)
-
-```go
-func (c *Cache) Get(key string) (string, bool) {
-    c.mu.RLock()
-    defer c.mu.RUnlock()
-    v, ok := c.m[key]
-    return v, ok
-}
-
-func (c *Cache) Set(key, value string) {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    c.m[key] = value
-}
-```
-
-**Expected output:**
-```
-BenchmarkCacheRWMutex-8    5000000    240 ns/op
-BenchmarkCacheMutex-8      2000000    610 ns/op
-```
-
-**Checkpoint:** RWMutex benchmark shows lower ns/op than Mutex benchmark when reads dominate.
-
----
-
-### Lab 4: sync.WaitGroup — 20 Concurrent Workers
-
-**What you'll practise:** Coordinating a pool of goroutines to completion with `WaitGroup`.
-
-**Task:**
-Launch 20 goroutines that each sleep a random duration (0–100ms) then log their ID and elapsed time. Use `sync.WaitGroup` to wait for all. Compare with a channel-based coordination approach.
-
-**Steps:**
-1. `var wg sync.WaitGroup; wg.Add(20)`
-2. Launch 20 goroutines: `defer wg.Done()`, sleep `rand.Intn(100)` ms, print ID and duration
-3. Call `wg.Wait()` and print "all workers done"
-4. Rewrite using a `done := make(chan struct{})` approach and compare code clarity
+1. Launch 5 goroutines in a loop without any waiting — run it several times and notice the order changes (or goroutines may not print at all if main exits first)
+2. Add `var wg sync.WaitGroup`, call `wg.Add(1)` before each `go`, `defer wg.Done()` inside, and `wg.Wait()` in main
+3. Run again — all 5 numbers appear every time, order may still vary
 
 ```go
 var wg sync.WaitGroup
-for i := 0; i < 20; i++ {
+for i := 0; i < 5; i++ {
     wg.Add(1)
-    go func(id int) {
+    go func(n int) {
         defer wg.Done()
-        d := time.Duration(rand.Intn(100)) * time.Millisecond
-        time.Sleep(d)
-        fmt.Printf("worker %d done after %v\n", id, d)
+        fmt.Printf("goroutine %d running\n", n)
     }(i)
 }
 wg.Wait()
-fmt.Println("all workers done")
+fmt.Println("all done")
+```
+
+**Expected output (order varies):**
+```
+goroutine 3 running
+goroutine 0 running
+goroutine 4 running
+goroutine 1 running
+goroutine 2 running
+all done
+```
+
+**Checkpoint:** Every run prints all 5 goroutine lines before "all done".
+
+---
+
+### Lab 2: Unbuffered Channel — Synchronous Handshake
+
+**What you'll practise:** Sending and receiving on an unbuffered channel to observe blocking behaviour.
+
+**Task:**
+Create an unbuffered `chan int`. Launch a producer goroutine that sends 1..10. In main, receive and print each value. Add `fmt.Println` before and after the send to see that the producer blocks until main is ready.
+
+**Steps:**
+1. Create `ch := make(chan int)` (no second argument)
+2. Launch a goroutine that sends `1..10` then closes the channel
+3. In main, receive with `v := <-ch` in a loop
+4. Add log lines around the send to visualise the blocking handshake
+
+```go
+ch := make(chan int)
+go func() {
+    for i := 1; i <= 10; i++ {
+        fmt.Printf("sending %d\n", i)
+        ch <- i
+        fmt.Printf("sent %d\n", i)
+    }
+    close(ch)
+}()
+for v := range ch {
+    fmt.Printf("received %d\n", v)
+}
 ```
 
 **Expected output:**
 ```
-worker 7 done after 12ms
-worker 3 done after 33ms
+sending 1
+received 1
+sent 1
+sending 2
+received 2
 ...
-all workers done
 ```
 
-**Checkpoint:** "all workers done" always appears last, after all 20 worker lines.
+**Checkpoint:** "sending N" and "received N" always appear together — the sender never races ahead.
 
 ---
 
-### Lab 5: sync.Once — Singleton Initialisation
+### Lab 3: Buffered Channel — Producer Runs Ahead
 
-**What you'll practise:** Guaranteeing exactly-once initialisation under concurrent access.
+**What you'll practise:** Understanding how buffer capacity decouples sender and receiver timing.
 
 **Task:**
-Simulate a database connection pool. Use `sync.Once` so the `connect()` function is called exactly once regardless of how many goroutines call `GetDB()` concurrently. Add a counter inside `connect()` to prove it runs once.
+Change the channel from Lab 2 to `make(chan int, 5)`. Observe that the producer can send up to 5 values before blocking. Add a `time.Sleep` in the receiver to exaggerate the effect.
 
 **Steps:**
-1. Declare `var (instance *DB; once sync.Once; initCount int32)`
-2. In `connect()`, increment `atomic.AddInt32(&initCount, 1)` and return a new DB
-3. `GetDB()` calls `once.Do(func() { instance = connect() })` then returns `instance`
-4. Launch 100 goroutines all calling `GetDB()`, print `initCount` — must be 1
+1. Change to `ch := make(chan int, 5)`
+2. Add `time.Sleep(100 * time.Millisecond)` in the receiver loop
+3. Run and observe the producer fires off 5 sends rapidly, then blocks waiting for room
+4. Remove the sleep and compare the timing
 
 ```go
-var (
-    instance  *DB
-    once      sync.Once
-    initCount int32
-)
-
-func connect() *DB {
-    atomic.AddInt32(&initCount, 1)
-    fmt.Println("connecting to DB...")
-    return &DB{}
-}
-
-func GetDB() *DB {
-    once.Do(func() { instance = connect() })
-    return instance
+ch := make(chan int, 5)
+go func() {
+    for i := 1; i <= 10; i++ {
+        ch <- i
+        fmt.Printf("queued %d\n", i)
+    }
+    close(ch)
+}()
+for v := range ch {
+    time.Sleep(100 * time.Millisecond)
+    fmt.Printf("processed %d\n", v)
 }
 ```
 
 **Expected output:**
 ```
-connecting to DB...
-initCount: 1
-all 100 goroutines got the same DB: true
+queued 1
+queued 2
+queued 3
+queued 4
+queued 5
+processed 1
+queued 6
+processed 2
+...
 ```
 
-**Checkpoint:** `initCount` is 1 and all 100 goroutines receive the same pointer value.
+**Checkpoint:** The first 5 "queued" lines appear before the first "processed" line.
 
 ---
 
-### Lab 6: sync/atomic — Atomic vs Mutex Benchmark
+### Lab 4: Range over Channel — Clean Producer/Consumer
 
-**What you'll practise:** Comparing lock-free atomic operations with mutex-protected increments.
+**What you'll practise:** Using `close(ch)` and `for v := range ch` for a clean, panic-free consumer.
 
 **Task:**
-Implement two counters: one using `atomic.AddInt64` and one using `sync.Mutex`. Benchmark both with 8 goroutines each incrementing 1 000 000 times. Observe which is faster and why.
+Write a `generate(nums ...int) <-chan int` function that sends numbers on a channel and closes it when done. In main, consume with `for v := range ch`. Show that ranging over a closed channel terminates naturally.
 
 **Steps:**
-1. `BenchmarkAtomicCounter` — use `atomic.AddInt64(&n, 1)` in a tight loop
-2. `BenchmarkMutexCounter` — use `mu.Lock(); n++; mu.Unlock()` in a tight loop
-3. Run `go test -bench=. -benchmem -cpu=8 ./...`
-4. Note that atomic is faster but limited to simple integer operations
+1. `generate` returns a receive-only `<-chan int`
+2. Inside `generate`, launch a goroutine that sends each number then calls `close(ch)`
+3. In main: `for v := range generate(1, 2, 3, 4, 5) { fmt.Println(v) }`
+4. Demonstrate that no sentinel value or separate done channel is needed
 
 ```go
-var atomicN int64
-
-func BenchmarkAtomicCounter(b *testing.B) {
-    b.RunParallel(func(pb *testing.PB) {
-        for pb.Next() {
-            atomic.AddInt64(&atomicN, 1)
+func generate(nums ...int) <-chan int {
+    ch := make(chan int)
+    go func() {
+        for _, n := range nums {
+            ch <- n
         }
-    })
+        close(ch)
+    }()
+    return ch
 }
 
-var mu sync.Mutex
-var mutexN int64
-
-func BenchmarkMutexCounter(b *testing.B) {
-    b.RunParallel(func(pb *testing.PB) {
-        for pb.Next() {
-            mu.Lock()
-            mutexN++
-            mu.Unlock()
-        }
-    })
+func main() {
+    for v := range generate(1, 2, 3, 4, 5) {
+        fmt.Println(v)
+    }
 }
 ```
 
 **Expected output:**
 ```
-BenchmarkAtomicCounter-8    200000000    6.0 ns/op
-BenchmarkMutexCounter-8      50000000   28.0 ns/op
+1
+2
+3
+4
+5
 ```
 
-**Checkpoint:** Atomic benchmark shows significantly lower ns/op than the mutex benchmark.
+**Checkpoint:** No goroutine leaks — the producer goroutine exits after `close(ch)`.
 
 ---
 
-### Lab 7: sync.Map — Concurrent Word Counter
+### Lab 5: Select — Multiplexing Channels with Timeout
 
-**What you'll practise:** Using `sync.Map` for concurrent map writes without a custom mutex.
+**What you'll practise:** Using `select` to multiplex two channels and handle timeouts.
 
 **Task:**
-Count word frequencies from 10 goroutines each processing a slice of text. Use `sync.Map` — specifically `LoadOrStore` and `Store` — to accumulate counts. Compare the code to the `sync.RWMutex` approach from Lab 3.
+Create two ticker channels firing at different rates (200ms and 500ms). Use `select` in a loop to print which fired. After 2 seconds, use `time.After` in the `select` to break out of the loop.
 
 **Steps:**
-1. Split a large text into 10 chunks, one per goroutine
-2. Each goroutine tokenises its chunk and increments counts in a `sync.Map`
-3. Use `sync.Map.Range` to iterate and print the top-10 words by count
-4. Note: `sync.Map` lacks atomic increment — you need a `LoadOrStore` + compare-and-swap pattern
+1. Create `fast := time.NewTicker(200 * time.Millisecond)` and `slow := time.NewTicker(500 * time.Millisecond)`
+2. Add `timeout := time.After(2 * time.Second)`
+3. `select` on all three channels; on timeout, `return` or `break`
+4. Add a `default` case, observe it spins; remove `default`, observe it blocks cleanly
 
 ```go
-var freq sync.Map
+fast := time.NewTicker(200 * time.Millisecond)
+slow := time.NewTicker(500 * time.Millisecond)
+timeout := time.After(2 * time.Second)
+
+for {
+    select {
+    case t := <-fast.C:
+        fmt.Println("fast tick at", t.Format("15:04:05.000"))
+    case t := <-slow.C:
+        fmt.Println("slow tick at", t.Format("15:04:05.000"))
+    case <-timeout:
+        fmt.Println("done")
+        return
+    }
+}
+```
+
+**Expected output:**
+```
+fast tick at 00:00:00.200
+fast tick at 00:00:00.400
+slow tick at 00:00:00.500
+fast tick at 00:00:00.600
+...
+done
+```
+
+**Checkpoint:** The loop exits at approximately 2 seconds and prints roughly 10 fast ticks and 4 slow ticks.
+
+---
+
+### Lab 6: Done Channel Pattern — Graceful Shutdown
+
+**What you'll practise:** Using a `done chan struct{}` to signal goroutines to stop.
+
+**Task:**
+Start a worker goroutine that processes items in an infinite loop, printing each item. After 1 second, close the `done` channel and verify the worker exits cleanly — no goroutine leak.
+
+**Steps:**
+1. Create `done := make(chan struct{})` and `jobs := make(chan int, 10)`
+2. Launch a worker that `select`s on `jobs` and `done`
+3. Send 5 jobs, sleep 1 second, then `close(done)`
+4. Use a `sync.WaitGroup` to confirm the worker exited
+
+```go
+done := make(chan struct{})
+jobs := make(chan int, 10)
+var wg sync.WaitGroup
+
+wg.Add(1)
+go func() {
+    defer wg.Done()
+    for {
+        select {
+        case <-done:
+            fmt.Println("worker shutting down")
+            return
+        case j := <-jobs:
+            fmt.Printf("processing job %d\n", j)
+        }
+    }
+}()
+
+for i := 1; i <= 5; i++ { jobs <- i }
+time.Sleep(time.Second)
+close(done)
+wg.Wait()
+fmt.Println("clean exit")
+```
+
+**Expected output:**
+```
+processing job 1
+...
+processing job 5
+worker shutting down
+clean exit
+```
+
+**Checkpoint:** `wg.Wait()` returns and "clean exit" prints — no goroutine remains.
+
+---
+
+### Lab 7: Fan-Out — Distribute Work Across N Workers
+
+**What you'll practise:** The fan-out pattern: one jobs channel consumed by multiple workers.
+
+**Task:**
+Create a `jobs` channel and `results` channel. Launch N=4 worker goroutines that each read from `jobs`, square the number, and send to `results`. Send 20 jobs, collect all results, and print them.
+
+**Steps:**
+1. Create `jobs := make(chan int, 20)` and `results := make(chan int, 20)`
+2. Launch 4 workers, each reading from `jobs` and writing to `results`
+3. Send integers 1..20 on `jobs`, then `close(jobs)`
+4. Use `sync.WaitGroup` to close `results` after all workers finish
+5. Collect and print all results
+
+```go
+const numWorkers = 4
+jobs := make(chan int, 20)
+results := make(chan int, 20)
 
 var wg sync.WaitGroup
-for _, chunk := range chunks {
+for w := 0; w < numWorkers; w++ {
     wg.Add(1)
-    go func(words []string) {
+    go func() {
         defer wg.Done()
-        for _, w := range words {
-            actual, _ := freq.LoadOrStore(w, new(int64))
-            atomic.AddInt64(actual.(*int64), 1)
+        for j := range jobs {
+            results <- j * j
         }
-    }(chunk)
+    }()
 }
-wg.Wait()
 
-freq.Range(func(k, v any) bool {
-    fmt.Printf("%s: %d\n", k, atomic.LoadInt64(v.(*int64)))
-    return true
+for i := 1; i <= 20; i++ { jobs <- i }
+close(jobs)
+
+go func() { wg.Wait(); close(results) }()
+
+for r := range results {
+    fmt.Println(r)
+}
+```
+
+**Expected output (order varies):**
+```
+1
+4
+9
+...
+400
+```
+
+**Checkpoint:** All 20 squared values appear in the output (in any order). The program exits cleanly.
+
+---
+
+### Final Lab (Project): Parallel File Hasher
+
+**What you'll practise:** Applying goroutines, channels, `sync.WaitGroup`, and a semaphore pattern to a real concurrent program.
+
+**Task:**
+Write a program that walks a directory and hashes every file concurrently using SHA-256, collecting results through a channel and printing them sorted by filename.
+
+**Steps:**
+1. Accept a directory path from `os.Args[1]`
+2. Walk with `filepath.WalkDir`, skip directories
+3. Use a semaphore (`make(chan struct{}, N)`) to cap concurrency at `runtime.NumCPU()` workers
+4. Launch a goroutine per file: acquire semaphore, hash with `crypto/sha256`, release semaphore, send result on channel
+5. Use `sync.WaitGroup` to close the results channel after all goroutines finish
+6. Collect results into a slice, sort by filename, print `filename: hexhash`
+
+```go
+sem := make(chan struct{}, runtime.NumCPU())
+
+var wg sync.WaitGroup
+results := make(chan result)
+
+go func() { wg.Wait(); close(results) }()
+
+filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+    if err != nil || d.IsDir() { return err }
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        sem <- struct{}{}
+        defer func() { <-sem }()
+        data, _ := os.ReadFile(path)
+        results <- result{path, fmt.Sprintf("%x", sha256.Sum256(data))}
+    }()
+    return nil
 })
 ```
 
 **Expected output:**
 ```
-the: 142
-a: 97
-and: 84
-...
+day-15/main.go: 3b4c9f...
+day-15/README.md: a1f203...
 ```
 
-**Checkpoint:** Every word appears exactly once in the output with an accurate count.
+**Checkpoint:** Output contains one line per file in the directory, sorted alphabetically by path, with no goroutine leak (program exits cleanly).
 
 ---
 
-### Final Lab (Project): Thread-Safe LRU Cache
+## Day Project: Parallel File Hasher
 
-**What you'll practise:** Combining `sync.RWMutex`, `container/list`, and `sync/atomic` into a production-quality concurrent data structure.
+Write a program that:
+1. Accepts a directory path from `os.Args[1]`
+2. Walks the directory with [`filepath.WalkDir`](https://pkg.go.dev/path/filepath#WalkDir)
+3. Hashes each file concurrently using goroutines and [`crypto/sha256`](https://pkg.go.dev/crypto/sha256)
+4. Collects results through a channel
+5. Prints each `filename: hash` sorted by filename
 
-**Task:**
-Implement a thread-safe LRU (Least Recently Used) cache with O(1) Get and Put operations.
-
-**Steps:**
-1. Implement `New(capacity int) *LRUCache`
-2. `Get(key string) (any, bool)` — acquire `RLock`, look up in map, move entry to front of list
-3. `Put(key string, value any)` — acquire `Lock`, insert at front, evict LRU entry (back of list) when at capacity
-4. Track hits and misses with `atomic.AddInt64`
-5. Write a concurrent test: 10 goroutines doing random Gets and Puts simultaneously, verified with `go test -race`
+Use a semaphore (buffered channel) to limit concurrency to N workers.
 
 ```go
-type LRUCache struct {
-    mu       sync.RWMutex
-    capacity int
-    list     *list.List
-    items    map[string]*list.Element
-    hits     int64
-    misses   int64
-}
-
-func (c *LRUCache) Get(key string) (any, bool) {
-    c.mu.Lock() // need write lock to move element
-    defer c.mu.Unlock()
-    if el, ok := c.items[key]; ok {
-        c.list.MoveToFront(el)
-        atomic.AddInt64(&c.hits, 1)
-        return el.Value.(*entry).value, true
-    }
-    atomic.AddInt64(&c.misses, 1)
-    return nil, false
-}
+sem := make(chan struct{}, runtime.NumCPU())
 ```
 
-**Expected output:**
-```
-put A=1, B=2, C=3 (capacity 2 — A evicted)
-get B: 2 (hit)
-get A: not found (miss)
-hits: 1  misses: 1
-```
-
-**Checkpoint:** `go test -race ./...` passes with no races. Get returns the correct value after a sequence of Puts that exceed capacity.
-
----
-
-## Day Project: Thread-Safe LRU Cache
-
-Implement an LRU (Least Recently Used) cache with:
-- `New(capacity int) *LRUCache`
-- `Get(key string) (any, bool)` — O(1), RLock
-- `Put(key string, value any)` — O(1), Lock, evicts LRU entry when full
-- Thread-safe using [`sync.RWMutex`](https://pkg.go.dev/sync#RWMutex)
-- A hit/miss counter using [`sync/atomic`](https://pkg.go.dev/sync/atomic)
-
-Use [`container/list`](https://pkg.go.dev/container/list) as the doubly linked list and a `map[string]*list.Element` for O(1) lookup.
-
-**Extension ideas:** add a TTL per entry using a `time.Time` in the value; implement `sync.Map`-based variant and benchmark both.
+**Extension ideas:** add a progress bar using `\r` escape; support MD5/SHA512 via a flag; detect duplicate files by hash.
 
 ## Official Documentation
 
-- [`sync`](https://pkg.go.dev/sync) — Mutex, RWMutex, WaitGroup, Once, Map
-- [`sync/atomic`](https://pkg.go.dev/sync/atomic) — AddInt64, LoadInt64, and other atomic operations
-- [`container/list`](https://pkg.go.dev/container/list) — doubly linked list for LRU implementation
-- [Language Spec: Go statements](https://go.dev/ref/spec#Go_statements) — goroutine semantics
-- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency) — synchronisation patterns
-- [Go Blog: The Go Memory Model](https://go.dev/ref/mem) — happens-before and synchronisation guarantees
-- [Go Blog: Share Memory by Communicating](https://go.dev/blog/codelab-share) — when to use channels vs mutexes
+- [`sync`](https://pkg.go.dev/sync) — WaitGroup for goroutine coordination
+- [`runtime`](https://pkg.go.dev/runtime) — `NumCPU()` for worker pool sizing
+- [`path/filepath`](https://pkg.go.dev/path/filepath) — `WalkDir` for directory traversal
+- [`crypto/sha256`](https://pkg.go.dev/crypto/sha256) — SHA-256 file hashing
+- [`os`](https://pkg.go.dev/os) — `os.Args`, file reading
+- [`fmt`](https://pkg.go.dev/fmt) — formatted output
+- [Language Spec: Go statements](https://go.dev/ref/spec#Go_statements) — goroutine launch syntax
+- [Language Spec: Channel types](https://go.dev/ref/spec#Channel_types) — channel declaration and direction
+- [Language Spec: Select statements](https://go.dev/ref/spec#Select_statements) — multi-channel select
+- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency) — goroutines and channels
+- [Go Blog: Go Concurrency Patterns: Pipelines](https://go.dev/blog/pipelines) — fan-out/fan-in patterns
+- [Go Tour: Concurrency](https://go.dev/tour/concurrency/1) — interactive goroutines and channels tour
