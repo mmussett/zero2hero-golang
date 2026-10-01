@@ -1,83 +1,146 @@
-//go:build !prod
-
-// Package main demonstrates //go:embed for baking static assets into a Go
-// binary, build tags to switch between embedded and disk-based serving, and
-// fs.ReadFile for reading embedded files at startup.
+// Day 27 — Final Project: Go Book Store
+//
+// A self-contained web application that demonstrates //go:embed, html/template
+// with FuncMap, build tags for dev/prod switching, and //go:generate for build
+// metadata.
 //
 // Build modes:
 //
-//	go run .               # dev mode — reads assets from disk (this file)
-//	go run -tags prod .    # prod mode — assets baked into the binary
-//	go build -tags prod -o server-prod .
+//	go run .                  # dev  — templates and assets read from disk
+//	go run -tags prod .       # prod — everything embedded in the binary
+//	go build -tags prod -o bookstore-prod .
+//	go generate ./...         # refresh internal/version/version.go
+//
+//go:generate go run gen/version.go
+
 package main
 
 import (
 	"flag"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"net/http"
 	"os"
+	"strings"
+
+	"github.com/mmussett/zero2hero-golang/day-27/internal/version"
 )
 
-// openFS returns a filesystem rooted at the local "assets" directory.
-// This is the dev-mode implementation (build tag: !prod).
-// With -tags prod the compiler picks assets_prod.go instead, which returns
-// an embed.FS so no source tree is needed at runtime.
-func openFS() (fs.FS, error) {
-	fmt.Println("[dev] serving assets from disk")
-	return os.DirFS("assets"), nil
+// Product is a single item in the book catalogue.
+type Product struct {
+	Name    string
+	Price   float64
+	InStock bool
+}
+
+// catalog is the in-memory product database for the store.
+var catalog = []Product{
+	{"The Go Programming Language", 49.99, true},
+	{"Learning Go, 2nd Edition", 39.99, true},
+	{"Go in Action", 44.99, false},
+	{"Concurrency in Go", 34.99, true},
+	{"Go Web Programming", 29.99, false},
+	{"Cloud Native Go", 54.99, true},
+}
+
+// pageData holds every value the index.html template needs.
+type pageData struct {
+	BuildTime string
+	Query     string
+	Products  []Product
 }
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", ":8080", "TCP address to listen on")
 	flag.Parse()
 
-	fsys, err := openFS()
+	// Open assets and templates from disk (dev) or embedded binary (prod).
+	assets, err := openAssets()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "open assets: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Demonstrate fs.ReadFile — read index.html and print the first line.
-	data, err := fs.ReadFile(fsys, "index.html")
+	// Print the ASCII-art banner stored in assets/banner.txt.
+	if data, readErr := fs.ReadFile(assets, "banner.txt"); readErr == nil {
+		fmt.Print(string(data))
+	}
+
+	fmt.Printf("build time : %s\n", version.BuildTime)
+
+	tmplFS, err := openTemplates()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "read index.html: %v\n", err)
+		fmt.Fprintf(os.Stderr, "open templates: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("index.html is %d bytes\n", len(data))
 
-	// List embedded files.
-	entries, _ := fs.ReadDir(fsys, ".")
-	fmt.Println("assets:")
-	for _, e := range entries {
-		info, _ := e.Info()
-		fmt.Printf("  %-20s  %d bytes\n", e.Name(), info.Size())
-	}
+	// Register custom template functions, then parse all *.html files.
+	tmpl := template.Must(
+		template.New("").Funcs(funcMap()).ParseFS(tmplFS, "*.html"),
+	)
 
-	// Serve all assets at /assets/ and index.html at /.
 	mux := http.NewServeMux()
 
-	// Serve the whole FS under /assets/.
-	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(fsys))))
+	// Serve static assets at /assets/: CSS, JS, images.
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
 
-	// Serve index.html at the root.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// Serve the dynamic product-catalogue page at /.
+	mux.HandleFunc("/", indexHandler(tmpl))
+
+	fmt.Printf("listening on http://localhost%s\n", *addr)
+	if err := http.ListenAndServe(*addr, mux); err != nil {
+		fmt.Fprintf(os.Stderr, "server: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// indexHandler returns an HTTP handler that renders the product catalogue.
+// It reads the optional ?q= query parameter and filters products by name.
+func indexHandler(tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
-		content, err := fs.ReadFile(fsys, "index.html")
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		data := pageData{
+			BuildTime: version.BuildTime,
+			Query:     q,
+			Products:  filterProducts(catalog, q),
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(content) //nolint:errcheck
-	})
+		if err := tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
 
-	fmt.Printf("listening on %s\n", *addr)
-	if err := http.ListenAndServe(*addr, mux); err != nil {
-		fmt.Fprintf(os.Stderr, "server: %v\n", err)
-		os.Exit(1)
+// filterProducts returns catalogue entries whose Name contains q (case-insensitive).
+// An empty q returns all entries unchanged.
+func filterProducts(products []Product, q string) []Product {
+	if q == "" {
+		return products
+	}
+	q = strings.ToLower(q)
+	out := make([]Product, 0, len(products))
+	for _, p := range products {
+		if strings.Contains(strings.ToLower(p.Name), q) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// funcMap returns the custom template functions available in index.html:
+//
+//   - upper       — strings.ToUpper
+//   - formatPrice — format float64 as "XX.XX"
+//   - join        — strings.Join (for slice-to-string rendering)
+func funcMap() template.FuncMap {
+	return template.FuncMap{
+		"upper":       strings.ToUpper,
+		"formatPrice": func(f float64) string { return fmt.Sprintf("%.2f", f) },
+		"join":        strings.Join,
 	}
 }

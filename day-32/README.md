@@ -263,6 +263,296 @@ notes-api/
 
 ---
 
+---
+
+## Labs
+
+### Lab 1: Flat Structure
+
+**What you'll practise:** Building a small web server entirely in `package main` to feel the limits of flat structure firsthand.
+
+**Task:**
+Create a minimal notes server with handler, in-memory store, and server wiring — all in `main.go`. No subdirectories.
+
+**Steps:**
+1. In `day-32/`, add to `main.go` with `package main`
+2. Define a `Note` struct with `ID int`, `Title string`, `Body string`
+3. Create a `MemStore` struct with a `[]Note` field and a `sync.Mutex`
+4. Add `Add(n Note) Note`, `All() []Note`, and `FindByID(id int) (Note, bool)` methods
+5. Add two HTTP handlers: `GET /notes` (list all) and `POST /notes` (create); wire in `main()`
+
+```go
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "sync"
+)
+
+type Note struct {
+    ID    int    `json:"id"`
+    Title string `json:"title"`
+    Body  string `json:"body"`
+}
+
+type MemStore struct {
+    mu    sync.Mutex
+    notes []Note
+    next  int
+}
+```
+
+**Expected output:**
+```
+Server listening on :8080
+# curl localhost:8080/notes            → []
+# curl -XPOST localhost:8080/notes \
+#   -d '{"title":"hello"}'            → {"id":1,"title":"hello","body":""}
+# curl localhost:8080/notes            → [{"id":1,...}]
+```
+
+**Checkpoint:** Count the lines. Once the file exceeds ~150–200 lines, navigation becomes painful. That is the natural inflection point for introducing structure — not before.
+
+---
+
+### Lab 2: The `cmd/` Pattern
+
+**What you'll practise:** Moving `main()` to `cmd/notes/main.go` so the root package becomes a reusable library.
+
+**Task:**
+Refactor the flat server from Lab 1. Move only the wiring to `cmd/notes/main.go`. Keep `Note`, `MemStore`, and handler registration in the root package (renamed from `main` to a library package).
+
+**Steps:**
+1. Rename the root package from `package main` to `package notes` in all non-main files
+2. Create `day-32/cmd/notes/main.go` with `package main`
+3. Move `main()` and only the startup/wiring code there
+4. Import the root library package from `cmd/notes/main.go`
+5. Build: `go build ./cmd/notes`
+
+```go
+// cmd/notes/main.go
+package main
+
+import (
+    notes "day32"
+    "net/http"
+)
+
+func main() {
+    store := notes.NewMemStore()
+    mux := http.NewServeMux()
+    notes.RegisterHandlers(mux, store)
+    http.ListenAndServe(":8080", mux)
+}
+```
+
+**Expected output:**
+```
+go build ./cmd/notes  ← succeeds, produces a binary
+./notes               ← server starts on :8080
+```
+
+**Checkpoint:** Verify `go build ./...` compiles both the library package and the binary. Confirm the library package contains no `main()` function.
+
+---
+
+### Lab 3: `internal/` Package
+
+**What you'll practise:** Using `internal/` to enforce encapsulation — the compiler prevents external modules from importing it.
+
+**Task:**
+Create `internal/store/store.go`. Import it successfully from within the module. Then attempt to import it from a throwaway module outside `day-32/` to observe the compiler error.
+
+**Steps:**
+1. Create `day-32/internal/store/store.go` with `package store`
+2. Move `MemStore` into it
+3. Import it from `cmd/notes/main.go` — this works (same module tree)
+4. Create a temporary directory outside `day-32/` with its own `go.mod` and attempt the import
+5. Record the exact compiler error message
+
+```go
+// day-32/internal/store/store.go
+package store
+
+type Note struct { ID int; Title, Body string }
+
+type MemStore struct {
+    mu    sync.Mutex
+    notes []Note
+    next  int
+}
+
+func NewMemStore() *MemStore { return &MemStore{next: 1} }
+```
+
+**Expected output:**
+```
+# From cmd/notes inside day-32: builds fine
+
+# From an outside module:
+./main.go:5:2: use of internal package day32/internal/store not allowed
+```
+
+**Checkpoint:** Read the Go spec on internal packages. State the rule in a comment: only code rooted at the **parent** of `internal/` may import it.
+
+---
+
+### Lab 4: Domain-Driven Layout
+
+**What you'll practise:** Reorganising a codebase into a domain-driven structure with `internal/note/` and `internal/platform/`.
+
+**Task:**
+Restructure `day-32/` into the domain-driven layout. Note types, store, and handlers all live under `internal/note/`. Config lives under `internal/platform/config/`.
+
+**Steps:**
+1. Create `internal/note/note.go` — the `Note` type
+2. Create `internal/note/store.go` — `Store` interface + `MemStore`
+3. Create `internal/note/handler.go` — HTTP handlers
+4. Create `internal/platform/config/config.go` — `Config{Addr string}`
+5. Update `cmd/notes/main.go` to import from the internal packages and wire them explicitly
+
+```
+day-32/
+├── go.mod
+├── cmd/notes/main.go
+└── internal/
+    ├── note/
+    │   ├── note.go
+    │   ├── store.go
+    │   └── handler.go
+    └── platform/
+        └── config/
+            └── config.go
+```
+
+**Expected output:**
+```
+go build ./...  ← all packages compile
+go vet ./...    ← no issues reported
+```
+
+**Checkpoint:** Open `internal/note/handler.go`. It must import `internal/note` (the store interface) but nothing from `cmd/`. Confirm the import graph has no cycles.
+
+---
+
+### Lab 5: Dependency Injection
+
+**What you'll practise:** Passing the store as an interface to the handler constructor, decoupling HTTP from storage and enabling test doubles.
+
+**Task:**
+Define a `Store` interface in `internal/note/`. Pass it into `NewHandler(s Store)`. Write a test using an in-memory fake — no real store required.
+
+**Steps:**
+1. In `internal/note/store.go`, define `type Store interface { Add(Note) Note; All() []Note; FindByID(int) (Note, bool) }`
+2. Ensure `MemStore` implements `Store`; add a compile-time check `var _ Store = (*MemStore)(nil)`
+3. `NewHandler(s Store) *Handler` — the handler holds the interface, not the concrete type
+4. In `internal/note/handler_test.go`, define `type fakeStore struct{...}` implementing `Store`
+5. Test `GET /notes` with zero, one, and three notes using only the fake
+
+```go
+// internal/note/store.go
+type Store interface {
+    Add(n Note) Note
+    All() []Note
+    FindByID(id int) (Note, bool)
+}
+
+// internal/note/handler.go
+type Handler struct{ store Store }
+func NewHandler(s Store) *Handler { return &Handler{store: s} }
+```
+
+**Expected output:**
+```
+--- PASS: TestListNotes/empty (0.00s)
+--- PASS: TestListNotes/one_note (0.00s)
+--- PASS: TestListNotes/three_notes (0.00s)
+```
+
+**Checkpoint:** Delete the `MemStore` import from `handler_test.go` — tests must still compile and pass using only the fake store.
+
+---
+
+### Lab 6: Avoiding Circular Imports
+
+**What you'll practise:** Recognising a circular import error and breaking the cycle using a shared interface package.
+
+**Task:**
+Deliberately create a cycle between two packages. Observe the compiler error. Break it by extracting a shared interface into a third package.
+
+**Steps:**
+1. Create `internal/a/a.go` importing `day32/internal/b`
+2. Create `internal/b/b.go` importing `day32/internal/a`
+3. Run `go build ./...` — observe the import cycle error
+4. Create `internal/types/types.go` with a shared interface both packages need
+5. Change `a` and `b` to import `types` instead of each other; rebuild
+
+```go
+// internal/a/a.go — broken
+package a
+import "day32/internal/b"  // cycle!
+
+// internal/b/b.go — broken
+package b
+import "day32/internal/a"  // cycle!
+```
+
+**Expected output:**
+```
+# Broken:
+import cycle not allowed:
+  day32/internal/a → day32/internal/b → day32/internal/a
+
+# Fixed (a and b both import types, not each other):
+go build ./...  ← succeeds
+```
+
+**Checkpoint:** Draw the import graph before and after the fix. Confirm no package in the fixed version imports a package that imports it back.
+
+---
+
+### Lab 7: Module Boundaries
+
+**What you'll practise:** Understanding the decision criteria for splitting code into multiple packages vs multiple modules.
+
+**Task:**
+This is a design analysis lab. Evaluate three real-world scenarios, decide packages vs modules, and record your reasoning as Go comments in a `decisions.go` file.
+
+**Steps:**
+1. **Scenario A:** A CLI tool and a shared config library in the same repo, released together → same module, separate packages
+2. **Scenario B:** A utility library published on pkg.go.dev that other teams import and pin by version → separate module with its own `go.mod`
+3. **Scenario C:** A monorepo with 5 microservices sharing a `common/` library → `go.work` workspace, one module per service plus one for `common/`
+4. Create `day-32/decisions.go` (`package main`) containing your reasoning as comments
+5. Run `go vet ./...` to confirm the file is valid Go
+
+```go
+// decisions.go
+package main
+
+// Scenario A: CLI + shared config — same module, separate packages
+// Reason: released together; no independent versioning needed.
+// Layout: myapp/ (go.mod), myapp/cmd/cli/, myapp/internal/config/
+
+// Scenario B: Published library
+// Reason: independent semantic versioning; external consumers pin specific tags.
+// Layout: separate repo, own go.mod, v2+ in module path when breaking changes ship.
+
+// Scenario C: Monorepo with 5 services
+// Reason: go.work lets each service module resolve dependencies locally during dev.
+// Layout: go.work at root; service-a/go.mod, service-b/go.mod, common/go.mod.
+```
+
+**Expected output:**
+```
+go vet ./...  ← no output (no issues)
+```
+
+**Checkpoint:** Look up two open-source Go projects (e.g., `go-chi/chi` and `google/go-cloud`). Which layout do they use? Add a short note to your comments.
+
+---
+
 ## Day Project: Restructure the Notes API
 
 Take the notes API built in Days 22–25 and restructure it into the domain-driven layout above:

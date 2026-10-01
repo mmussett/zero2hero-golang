@@ -492,6 +492,292 @@ go mod vendor                                     # copy deps into ./vendor/
 
 ---
 
+---
+
+## Labs
+
+### Lab 1: Create Your First Module
+
+**What you'll practise:** Initialising a Go module, writing and running a hello world program from scratch.
+
+**Task:**
+Create a brand-new module outside this repo and run a hello world program end-to-end.
+
+**Steps:**
+1. Open a terminal and create a fresh directory: `mkdir hello-go && cd hello-go`
+2. Initialise a module: `go mod init github.com/yourname/hello-go`
+3. Create `main.go` with the starter code below
+4. Run with `go run .`
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+    fmt.Println("Hello, Gopher!")
+}
+```
+
+**Expected output:**
+```
+Hello, Gopher!
+```
+
+**Checkpoint:** `go run .` prints the greeting without errors. Run `cat go.mod` — confirm it shows your module path and a `go` version line.
+
+---
+
+### Lab 2: Variables — All Declaration Styles
+
+**What you'll practise:** Using `var`, `:=`, `const`, and `iota`; observing what unused variables do.
+
+**Task:**
+Declare variables using every style Go supports, add an `iota` enum, then deliberately trigger the "declared and not used" compiler error.
+
+**Steps:**
+1. Declare a `var` at package scope (outside any function)
+2. Use `:=` inside `main` for short declarations
+3. Declare a `const` block with two constants
+4. Add a `Direction` type using `iota` for `North`, `South`, `East`, `West`
+5. Comment out one usage, observe the compile error, then restore it
+
+```go
+package main
+
+import "fmt"
+
+var appName = "zero2hero"
+
+const (
+    MaxRetries = 3
+    Version    = "1.0.0"
+)
+
+type Direction int
+
+const (
+    North Direction = iota // 0
+    South                  // 1
+    East                   // 2
+    West                   // 3
+)
+
+func main() {
+    greeting := "Hello"
+    fmt.Println(greeting, appName)
+    fmt.Println("Max retries:", MaxRetries, "Version:", Version)
+    fmt.Println("Directions:", North, South, East, West)
+}
+```
+
+**Expected output:**
+```
+Hello zero2hero
+Max retries: 3 Version: 1.0.0
+Directions: 0 1 2 3
+```
+
+**Checkpoint:** Program compiles and prints all three lines. Then comment out `fmt.Println(greeting, appName)` — confirm you get `greeting declared and not used`.
+
+---
+
+### Lab 3: Your First Sub-Package
+
+**What you'll practise:** Creating an exported function in a sub-package and importing it from `main`.
+
+**Task:**
+Add a `greet/` directory with an exported `Hello` function, then call it from `main.go`. Try to call an unexported function to see the compile error.
+
+**Steps:**
+1. Create `greet/greet.go` with `package greet`
+2. Write an exported `Hello(name string) string` function and an unexported `buildMessage` helper
+3. In `main.go`, import `greet` using the full module path and call `greet.Hello`
+4. Bonus: try calling `greet.buildMessage` from `main.go` to see the visibility error
+
+```go
+// greet/greet.go
+package greet
+
+import "fmt"
+
+// Hello returns a personalised greeting. Exported — visible to all importers.
+func Hello(name string) string {
+    return fmt.Sprintf("Hello, %s! Welcome to Go.", name)
+}
+
+// buildMessage is unexported — invisible outside this package.
+func buildMessage(name string) string {
+    return "Hello, " + name
+}
+```
+
+```go
+// main.go
+package main
+
+import (
+    "fmt"
+    "github.com/yourname/hello-go/greet"
+)
+
+func main() {
+    fmt.Println(greet.Hello("Gopher"))
+}
+```
+
+**Expected output:**
+```
+Hello, Gopher! Welcome to Go.
+```
+
+**Checkpoint:** `go run .` works. Attempting `greet.buildMessage("x")` in `main.go` produces `cannot refer to unexported name greet.buildMessage`.
+
+---
+
+### Lab 4: Two-Module Workspace
+
+**What you'll practise:** Creating a Go workspace so two local modules can reference each other without publishing to a registry.
+
+**Task:**
+Create `mylib` and `myapp` as separate modules in a parent folder, wire them with `go work init`, and confirm that `GOWORK=off` breaks the build — proving the workspace is the glue.
+
+**Steps:**
+1. `mkdir workspace-demo && cd workspace-demo`
+2. `mkdir mylib && cd mylib && go mod init github.com/yourname/mylib` — write `lib.go`
+3. `cd .. && mkdir myapp && cd myapp && go mod init github.com/yourname/myapp` — write `main.go`
+4. From `workspace-demo/`: `go work init ./mylib ./myapp`
+5. `go run ./myapp` — should succeed
+6. `GOWORK=off go run ./myapp` — should fail
+
+```go
+// mylib/lib.go
+package mylib
+
+func Greet(name string) string {
+    return "Hello from mylib, " + name + "!"
+}
+```
+
+```go
+// myapp/main.go
+package main
+
+import (
+    "fmt"
+    "github.com/yourname/mylib"
+)
+
+func main() {
+    fmt.Println(mylib.Greet("Gopher"))
+}
+```
+
+**Expected output:**
+```
+Hello from mylib, Gopher!
+```
+
+**Checkpoint:** `go run ./myapp` succeeds. `GOWORK=off go run ./myapp` fails with a "no required module provides" error. `cat go.work` lists both modules under `use`.
+
+---
+
+### Lab 5: Explore Your Module with Go Tooling
+
+**What you'll practise:** Using `go list`, `go env`, `go doc`, and `go build -v` to understand what Go is doing without writing new code.
+
+**Task:**
+Run five tooling commands against the `day-01` module and interpret the output.
+
+**Steps:**
+1. `cd` into `day-01/` (or use the repo root with `go list -m ./day-01`)
+2. `go list -m all` — list all module dependencies (should be empty for day-01)
+3. `go env GOPATH` and `go env GOROOT` — locate the module cache and the Go installation
+4. `go doc fmt.Printf` — read the signature and docs in-terminal without a browser
+5. `go doc runtime.Version` — see what it returns
+6. `go build -v .` — observe each package being compiled
+
+**Expected output (examples):**
+```
+$ go list -m all
+github.com/mmussett/zero2hero-golang/day-01
+
+$ go env GOPATH
+/home/user/go
+
+$ go doc fmt.Printf
+func Printf(format string, a ...any) (n int, err error)
+    Printf formats according to a format specifier and writes to standard
+    output. ...
+
+$ go build -v .
+runtime/internal/sys
+...
+fmt
+github.com/mmussett/zero2hero-golang/day-01
+```
+
+**Checkpoint:** You can look up any stdlib function offline with `go doc`. Note that `go list -m all` for day-01 shows only one line (no external deps). Compare with `go list -m all` from `day-13/` (which uses testify) — it shows a full dependency tree.
+
+---
+
+### Lab 6 (Final): Day 01 Program — Module Explorer
+
+**What you'll practise:** Combining packages, format verbs, runtime introspection, and `os` in one complete program that proves you understand Go's module system.
+
+**Task:**
+Write `day-01/main.go` — a program that prints a rich runtime summary using at least four stdlib packages and all three format verbs from the `fmt` package.
+
+**Steps:**
+1. Import `fmt`, `os`, `runtime`, and `runtime/debug`
+2. Print a header using `fmt.Printf` with `%d`, `%s`, and `%v` verbs
+3. Print the Go version via `runtime.Version()` and `runtime.GOOS`/`runtime.GOARCH`
+4. Call `debug.ReadBuildInfo()` and print the module path from `info.Main.Path`
+5. Print `GOPATH` and `GOROOT` via `os.Getenv`
+6. Print `os.Args` — all command-line arguments including the program name
+
+```go
+package main
+
+import (
+    "fmt"
+    "os"
+    "runtime"
+    "runtime/debug"
+)
+
+func main() {
+    info, _ := debug.ReadBuildInfo()
+
+    fmt.Printf("=== Zero to Hero: Go ===\n")
+    fmt.Printf("Day:     %d\n", 1)
+    fmt.Printf("Go:      %s\n", runtime.Version())
+    fmt.Printf("OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+    if info != nil {
+        fmt.Printf("Module:  %s\n", info.Main.Path)
+    }
+    fmt.Printf("GOPATH:  %s\n", os.Getenv("GOPATH"))
+    fmt.Printf("GOROOT:  %s\n", os.Getenv("GOROOT"))
+    fmt.Printf("Args:    %v\n", os.Args)
+}
+```
+
+**Expected output:**
+```
+=== Zero to Hero: Go ===
+Day:     1
+Go:      go1.23.x
+OS/Arch: linux/amd64
+Module:  github.com/mmussett/zero2hero-golang/day-01
+GOPATH:  /home/user/go
+GOROOT:  /usr/local/go
+Args:    [/tmp/go-build.../exe/day-01 Alice 42]
+```
+
+**Checkpoint:** Run `go run . Alice 42` — `Args` includes both extra arguments. Run `go vet .` — zero warnings. Run `go build .` — binary produced without errors.
+
+---
+
 ## 10. Day Project Goal
 
 Write a Go program (`day-01/main.go`) that demonstrates everything from today:

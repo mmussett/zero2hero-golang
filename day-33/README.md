@@ -399,6 +399,381 @@ Neither is universally better. Many programs need both.
 
 ---
 
+---
+
+## Labs
+
+### Lab 1: Channel as a Pipe
+
+**What you'll practise:** Sending and receiving values through an unbuffered channel between two goroutines.
+
+**Task:**
+Launch a sender goroutine that sends 5 integers on a channel. Receive them all in `main`. Print each value from both sides to visualise the synchronised handoff.
+
+**Steps:**
+1. Create an unbuffered `chan int`
+2. Launch a goroutine that sends 1 through 5 and then closes the channel
+3. In `main`, use `for v := range ch` to receive all values
+4. Print `"sending: N"` from the goroutine and `"received: N"` from main
+
+```go
+func main() {
+    ch := make(chan int)
+
+    go func() {
+        for i := 1; i <= 5; i++ {
+            fmt.Println("sending:", i)
+            ch <- i
+        }
+        close(ch)
+    }()
+
+    for v := range ch {
+        fmt.Println("received:", v)
+    }
+}
+```
+
+**Expected output:**
+```
+sending: 1
+received: 1
+sending: 2
+received: 2
+sending: 3
+received: 3
+sending: 4
+received: 4
+sending: 5
+received: 5
+```
+
+**Checkpoint:** Change to a buffered channel `make(chan int, 5)`. Observe how the output order changes — the sender bursts ahead before the receiver catches up. Explain the difference in a comment.
+
+---
+
+### Lab 2: Pipeline Stages
+
+**What you'll practise:** Building a three-stage pipeline where each stage is an independent goroutine communicating via channels.
+
+**Task:**
+Implement `generate → square → print`. Each stage is a separate function that returns a `<-chan int`. Wire them together in `main`.
+
+**Steps:**
+1. Write `generate(nums ...int) <-chan int` — sends each number, then closes the channel
+2. Write `square(in <-chan int) <-chan int` — receives, squares each value, sends
+3. In `main`, compose: `for v := range square(generate(2, 3, 4, 5)) { fmt.Println(v) }`
+4. Add a third stage `double(in <-chan int) <-chan int` and compose all three
+
+```go
+func generate(nums ...int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for _, n := range nums {
+            out <- n
+        }
+    }()
+    return out
+}
+
+func square(in <-chan int) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        for n := range in {
+            out <- n * n
+        }
+    }()
+    return out
+}
+```
+
+**Expected output:**
+```
+# generate → square:
+4 9 16 25
+
+# generate → square → double:
+8 18 32 50
+```
+
+**Checkpoint:** Add `fmt.Println("stage: square, processing", n)` inside `square`. Observe the interleaving with the final print — this confirms the stages run concurrently, not sequentially.
+
+---
+
+### Lab 3: Fan-Out
+
+**What you'll practise:** Distributing work from one shared channel to N worker goroutines.
+
+**Task:**
+Send 20 jobs (integers 0–19) on a shared input channel. Launch 4 workers that each read from the same channel. Each worker prints which job it processed and its worker ID.
+
+**Steps:**
+1. Create `jobs := make(chan int, 20)` and send 0–19, then close it
+2. Launch 4 workers with `go worker(id, jobs, &wg)` where each worker loops `for j := range jobs`
+3. Use a `sync.WaitGroup` to wait for all workers to finish
+4. Print `"worker N processed job M"` from each worker
+
+```go
+func worker(id int, jobs <-chan int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for j := range jobs {
+        fmt.Printf("worker %d processed job %d\n", id, j)
+        time.Sleep(10 * time.Millisecond) // simulate work
+    }
+}
+
+func main() {
+    jobs := make(chan int, 20)
+    var wg sync.WaitGroup
+
+    for i := 0; i < 4; i++ {
+        wg.Add(1)
+        go worker(i, jobs, &wg)
+    }
+
+    for j := 0; j < 20; j++ { jobs <- j }
+    close(jobs)
+    wg.Wait()
+}
+```
+
+**Expected output:**
+```
+worker 0 processed job 0
+worker 1 processed job 1
+worker 2 processed job 4
+... (order varies; all 20 jobs are processed exactly once)
+```
+
+**Checkpoint:** Count how many jobs each worker processed. Is the distribution roughly even? Try changing the worker count from 4 to 1, then to 20. Observe how distribution changes.
+
+---
+
+### Lab 4: Fan-In (Merge)
+
+**What you'll practise:** Merging multiple input channels into a single output channel using a WaitGroup.
+
+**Task:**
+Create 3 producer goroutines, each sending 5 values on their own channel. Write a `merge` function that combines them into one `<-chan string`. Drain the merged channel in `main`.
+
+**Steps:**
+1. Write `producer(name string, count int) <-chan string` that sends `"name-0"`, `"name-1"`, ... then closes
+2. Write `merge(channels ...<-chan string) <-chan string` using a `sync.WaitGroup` inside a goroutine
+3. Launch 3 producers: `"A"`, `"B"`, `"C"`
+4. Drain the merged channel and count total values received
+
+```go
+func merge(channels ...<-chan string) <-chan string {
+    out := make(chan string)
+    var wg sync.WaitGroup
+
+    for _, ch := range channels {
+        wg.Add(1)
+        go func(c <-chan string) {
+            defer wg.Done()
+            for v := range c { out <- v }
+        }(ch)
+    }
+
+    go func() {
+        wg.Wait()
+        close(out)
+    }()
+    return out
+}
+```
+
+**Expected output:**
+```
+A-0 B-0 C-0 A-1 B-1 ...  (order varies; all 15 values appear)
+Total: 15
+```
+
+**Checkpoint:** Use a `map[string]bool` to check for duplicates — there should be none. Verify the total count is exactly 15.
+
+---
+
+### Lab 5: Done Channel Cancellation
+
+**What you'll practise:** Stopping a generator goroutine early using a done channel and `select`.
+
+**Task:**
+Write an infinite number generator that checks a `done <-chan struct{}` on each iteration. Cancel it from `main` after receiving exactly 3 values.
+
+**Steps:**
+1. Write `generate(done <-chan struct{}) <-chan int` sending 0, 1, 2, ... indefinitely
+2. Use `select` inside the generator with two cases: `out <- n` and `<-done`
+3. Print a message when the generator goroutine exits using `defer`
+4. In `main`, receive exactly 3 values, then `close(done)`
+
+```go
+func generate(done <-chan struct{}) <-chan int {
+    out := make(chan int)
+    go func() {
+        defer close(out)
+        defer fmt.Println("generator: stopped")
+        n := 0
+        for {
+            select {
+            case out <- n:
+                n++
+            case <-done:
+                return
+            }
+        }
+    }()
+    return out
+}
+```
+
+**Expected output:**
+```
+received: 0
+received: 1
+received: 2
+generator: stopped
+main: done
+```
+
+**Checkpoint:** Remove the `case <-done` branch. Observe that the goroutine leaks and the process hangs. Restore the done channel to fix it.
+
+---
+
+### Lab 6: select with Timeout
+
+**What you'll practise:** Using `select` with `time.After` to return a timeout error when a result does not arrive in time.
+
+**Task:**
+Write `fetchWithTimeout(ch <-chan string, d time.Duration) (string, error)` that returns the result or a timeout error. Test it with a fast producer (10ms) and a slow producer (500ms) using a 100ms deadline.
+
+**Steps:**
+1. Write `fetchWithTimeout` using `select` with two cases: the result channel and `time.After(d)`
+2. Write `slowProducer(delay time.Duration) <-chan string` that sends after the given delay
+3. Call with a 100ms timeout — the fast producer succeeds, the slow one times out
+4. Make the slow producer's channel buffered (size 1) to avoid a goroutine leak on timeout
+
+```go
+func fetchWithTimeout(ch <-chan string, d time.Duration) (string, error) {
+    select {
+    case result := <-ch:
+        return result, nil
+    case <-time.After(d):
+        return "", fmt.Errorf("timed out after %v", d)
+    }
+}
+
+func slowProducer(delay time.Duration) <-chan string {
+    ch := make(chan string, 1) // buffered: goroutine can send even if we timed out
+    go func() {
+        time.Sleep(delay)
+        ch <- "result"
+    }()
+    return ch
+}
+```
+
+**Expected output:**
+```
+fast (10ms):  "result" <nil>
+slow (500ms): "" timed out after 100ms
+```
+
+**Checkpoint:** Change the slow producer's channel to unbuffered. Time out again. Use `runtime.NumGoroutine()` before and after — the count will be higher after the timeout, confirming a goroutine leak.
+
+---
+
+### Lab 7: The Nil Channel Trick
+
+**What you'll practise:** Using a nil channel inside `select` to dynamically disable a case when one input is exhausted.
+
+**Task:**
+Read from two channels, `ch1` and `ch2`. When one closes, set it to `nil` to stop selecting it. Exit the loop only when both are nil.
+
+**Steps:**
+1. Create `ch1` and `ch2` via a `producer` helper, each sending 3 values at different intervals
+2. In a loop, use `select` with both channels using the comma-ok form
+3. When a channel closes (`ok == false`), set it to `nil`
+4. Exit the loop when `ch1 == nil && ch2 == nil`
+
+```go
+func main() {
+    ch1 := producer("A", 3, 20*time.Millisecond)
+    ch2 := producer("B", 3, 50*time.Millisecond)
+
+    for ch1 != nil || ch2 != nil {
+        select {
+        case v, ok := <-ch1:
+            if !ok { ch1 = nil; continue }
+            fmt.Println("from ch1:", v)
+        case v, ok := <-ch2:
+            if !ok { ch2 = nil; continue }
+            fmt.Println("from ch2:", v)
+        }
+    }
+    fmt.Println("both channels drained")
+}
+```
+
+**Expected output:**
+```
+from ch1: A-0
+from ch2: B-0
+from ch1: A-1
+from ch1: A-2
+from ch2: B-1
+from ch2: B-2
+both channels drained
+```
+
+**Checkpoint:** Remove the nil assignment (`ch1 = nil`). Add `fmt.Println("BUG: spin on closed ch1")` in the ch1 case. Observe the tight spin loop when `ch1` closes — this is why the nil trick exists.
+
+---
+
+### Lab 8: Channel Direction Types
+
+**What you'll practise:** Using directional channel types (`chan<-` and `<-chan`) in function signatures to enforce data flow direction at compile time.
+
+**Task:**
+Refactor the pipeline from Lab 2 to use strictly directional parameters. Attempt to violate direction in comments to confirm the compile errors.
+
+**Steps:**
+1. Confirm `generate` returns `<-chan int` (receive-only to callers)
+2. Confirm `square` accepts `<-chan int` and returns `<-chan int`
+3. Add a `sink(in <-chan int)` function that prints values — cannot send on `in`
+4. Add a `source(out chan<- int)` function — cannot receive from `out`
+5. Comment-out a direction violation in each function and document the error
+
+```go
+// generate: owns the channel internally, exposes receive-only to callers
+func generate(nums ...int) <-chan int { /* ... */ }
+
+// square: receives from in, sends to internal channel; both typed
+func square(in <-chan int) <-chan int { /* ... */ }
+
+// sink: receive-only parameter — compiler prevents accidental send
+func sink(in <-chan int) {
+    for v := range in {
+        fmt.Println("output:", v)
+    }
+    // in <- 99  // compile error: cannot send to receive-only channel
+}
+```
+
+**Expected output:**
+```
+output: 4
+output: 9
+output: 16
+output: 25
+# Uncommenting "in <- 99": cannot send to receive-only channel
+```
+
+**Checkpoint:** Create a plain `chan int` in main and pass it to `square` (narrowed to `<-chan int`) and to `sink` (also `<-chan int`). Confirm Go's automatic narrowing — no explicit cast needed.
+
+---
+
 ## Day Project: Channel-Based Pipeline
 
 Build a concurrent text-processing pipeline that:

@@ -1,4 +1,4 @@
-/* Day 27: Embedded Assets — basic stylesheet */
+/* Day 27: Go Book Store — stylesheet */
 
 *, *::before, *::after {
     box-sizing: border-box;
@@ -11,40 +11,135 @@ body {
     background: #f5f5f5;
     color: #222;
     min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    padding: 2rem 1rem;
 }
 
 .container {
     background: #fff;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-    max-width: 640px;
+    max-width: 760px;
+    margin: 0 auto;
     padding: 2rem;
-    width: 90%;
 }
 
 h1 {
     font-size: 1.75rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.25rem;
     color: #007bff;
 }
 
-p {
-    line-height: 1.6;
-    margin-bottom: 0.75rem;
+.build-time {
+    font-size: 0.75rem;
+    color: #999;
+    margin-bottom: 1.5rem;
 }
 
-ul {
-    padding-left: 1.5rem;
-    line-height: 1.8;
+/* Search form */
+.search {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 1.5rem;
 }
 
-code {
-    background: #f0f0f0;
-    border-radius: 3px;
-    font-family: monospace;
-    font-size: 0.9em;
-    padding: 0.1em 0.3em;
+.search input[type="search"] {
+    flex: 1;
+    padding: 0.45rem 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.search button {
+    padding: 0.45rem 1rem;
+    background: #007bff;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.95rem;
+}
+
+.search button:hover {
+    background: #0056b3;
+}
+
+.clear-link {
+    font-size: 0.85rem;
+    color: #666;
+    text-decoration: none;
+}
+
+.clear-link:hover {
+    text-decoration: underline;
+}
+
+/* Product table */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+}
+
+th {
+    background: #f0f4ff;
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #555;
+    border-bottom: 2px solid #dde;
+}
+
+td {
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+}
+
+tr.in-stock td:last-child {
+    color: #28a745;
+    font-weight: 600;
+}
+
+tr.out-stock {
+    opacity: 0.6;
+}
+
+tr.out-stock td:last-child {
+    color: #dc3545;
+}
+
+tr:hover {
+    background: #f9f9ff;
+}
+
+.result-count {
+    font-size: 0.85rem;
+    color: #666;
+    margin-top: 0.5rem;
+}
+
+.no-results {
+    color: #666;
+    font-size: 0.95rem;
+}
+
+.no-results a {
+    color: #007bff;
+    text-decoration: none;
+    margin-left: 0.5rem;
+}
+
+.no-results a:hover {
+    text-decoration: underline;
+}
+
+/* Search highlight */
+mark {
+    background: #fff3cd;
+    padding: 0 1px;
+    border-radius: 2px;
 }

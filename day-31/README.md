@@ -312,6 +312,346 @@ func Process[T Processable](input T) T { ... }
 
 ---
 
+---
+
+## Labs
+
+### Lab 1: Implicit Satisfaction
+
+**What you'll practise:** Defining an interface and satisfying it implicitly, with a compile-time check.
+
+**Task:**
+Define a `Quacker` interface with a `Quack() string` method. Create two types — `Duck` and `Person` — that implement it without any explicit declaration. Add compile-time assertion guards to catch mistakes early.
+
+**Steps:**
+1. Create a new file `lab01_quacker.go` in `day-31/`
+2. Define `type Quacker interface { Quack() string }`
+3. Add `Duck` and `Person` structs with `Quack()` methods
+4. Add compile-time checks using the blank identifier
+5. Write a `MakeItQuack(q Quacker)` function and call it from `main`
+
+```go
+// Compile-time interface satisfaction checks
+var _ Quacker = (*Duck)(nil)
+var _ Quacker = (*Person)(nil)
+
+type Duck struct{ Name string }
+func (d *Duck) Quack() string { return "Quack! I'm " + d.Name }
+
+type Person struct{ Name string }
+func (p *Person) Quack() string { return "I'm quacking like a duck! — " + p.Name }
+```
+
+**Expected output:**
+```
+Quack! I'm Donald
+I'm quacking like a duck! — Bob
+```
+
+**Checkpoint:** Remove the `Quack()` method from `Person` and confirm it fails to compile with a clear error about missing method.
+
+---
+
+### Lab 2: Interface Composition
+
+**What you'll practise:** Composing small interfaces into larger ones, mirroring the `io` package design.
+
+**Task:**
+Define `Reader`, `Writer`, and `Closer` interfaces. Compose `ReadWriter`, `ReadCloser`, and `ReadWriteCloser`. Implement a `BufferRWC` struct that satisfies all three composed interfaces.
+
+**Steps:**
+1. Define three single-method interfaces
+2. Compose them into three combined interfaces
+3. Implement `BufferRWC` with all three methods
+4. Add a function `processRWC(rwc ReadWriteCloser)` that calls all three
+5. Verify `*BufferRWC` satisfies all composed interfaces via compile-time checks
+
+```go
+type Reader  interface { Read()  string }
+type Writer  interface { Write(s string) }
+type Closer  interface { Close() error }
+
+type ReadWriter      interface { Reader; Writer }
+type ReadCloser      interface { Reader; Closer }
+type ReadWriteCloser interface { Reader; Writer; Closer }
+
+// Compile-time checks
+var _ ReadWriteCloser = (*BufferRWC)(nil)
+```
+
+**Expected output:**
+```
+Read: hello
+Written: world
+Closed successfully
+```
+
+**Checkpoint:** Try passing a `*BufferRWC` to a function that accepts `ReadCloser` — it should work. Try passing it to a function that accepts `ReadWriter` — also works. Explain why in a comment.
+
+---
+
+### Lab 3: The Nil Interface Trap
+
+**What you'll practise:** Understanding why a typed nil pointer assigned to an interface is NOT nil.
+
+**Task:**
+Create a custom error type `*ValidationError`. Write a function that conditionally returns it. Demonstrate the trap and then write the correct pattern.
+
+**Steps:**
+1. Define `type ValidationError struct { Field, Message string }`
+2. Implement `func (e *ValidationError) Error() string`
+3. Write `func validateAgeBroken(age int) error` that returns a typed nil when valid
+4. Call it and print `err == nil` — observe it prints `false`
+5. Fix by returning plain `nil` directly
+
+```go
+func validateAgeBroken(age int) error {
+    var err *ValidationError  // typed nil
+    if age < 0 {
+        err = &ValidationError{Field: "age", Message: "must be non-negative"}
+    }
+    return err  // BUG: always returns non-nil interface!
+}
+
+func validateAgeFixed(age int) error {
+    if age < 0 {
+        return &ValidationError{Field: "age", Message: "must be non-negative"}
+    }
+    return nil  // correct: untyped nil
+}
+```
+
+**Expected output:**
+```
+broken: err == nil → false  (BUG!)
+fixed:  err == nil → true   (correct)
+```
+
+**Checkpoint:** Use `fmt.Printf("%T %v\n", err, err)` on the broken version to see the type is `*ValidationError` even though the value is nil.
+
+---
+
+### Lab 4: Type Assertion
+
+**What you'll practise:** Safe type assertion with the comma-ok pattern to avoid panics.
+
+**Task:**
+Write a function `fileInfo(r io.Reader) string` that tries to assert `r` to `*os.File` and returns the filename if successful, or `"(not a file)"` otherwise.
+
+**Steps:**
+1. Import `io`, `os`, `strings`
+2. Write `fileInfo` using the two-value assertion form
+3. Call it with an `*os.File` (opened from a temp file) and with a `*strings.Reader`
+4. Show what happens with the single-value (panicking) form when the assertion fails
+
+```go
+func fileInfo(r io.Reader) string {
+    f, ok := r.(*os.File)
+    if !ok {
+        return "(not a file)"
+    }
+    return f.Name()
+}
+
+// Dangerous — only use when you are 100% certain of the type:
+// f := r.(*os.File)  // panics if r is not *os.File
+```
+
+**Expected output:**
+```
+os.File:        /tmp/testfile123
+strings.Reader: (not a file)
+```
+
+**Checkpoint:** Change the comma-ok to single-value form and pass a `*strings.Reader` — confirm the panic message and stack trace.
+
+---
+
+### Lab 5: Type Switch
+
+**What you'll practise:** Using a type switch to handle multiple concrete types from an `any` parameter.
+
+**Task:**
+Write `prettyPrint(v any) string` that formats different types differently. Handle `int`, `string`, `[]string`, `map[string]any`, `fmt.Stringer`, and a default case.
+
+**Steps:**
+1. Write the type switch with all required cases
+2. For `int`: format as `"int(42)"`
+3. For `string`: format as `"string(\"hello\")"`
+4. For `[]string`: format each element with its index
+5. For `map[string]any`: print each key-value pair sorted by key
+6. For `fmt.Stringer`: call `.String()`
+7. Default: use `fmt.Sprintf("%T: %v", v, v)`
+
+```go
+func prettyPrint(v any) string {
+    switch x := v.(type) {
+    case nil:
+        return "<nil>"
+    case int:
+        return fmt.Sprintf("int(%d)", x)
+    case string:
+        return fmt.Sprintf("string(%q)", x)
+    case []string:
+        // your code here
+    case map[string]any:
+        // your code here
+    case fmt.Stringer:
+        return "Stringer: " + x.String()
+    default:
+        return fmt.Sprintf("%T: %v", x, x)
+    }
+}
+```
+
+**Expected output:**
+```
+<nil>
+int(42)
+string("hello")
+[0]="foo" [1]="bar"
+key1=val1 key2=val2
+Stringer: 2009-11-10 23:00:00 +0000 UTC
+```
+
+**Checkpoint:** Add `bool` as a named case. Verify that the `fmt.Stringer` case matches any type implementing that interface by passing a `time.Time` value.
+
+---
+
+### Lab 6: Small Interface Design
+
+**What you'll practise:** Narrowing a function's dependency from a large concrete struct to a minimal interface, enabling easier testing.
+
+**Task:**
+You have a `ReportGenerator` struct with many methods. A function `sendReport` only uses `Title()` and `CSV() []byte`. Refactor to accept a small interface instead.
+
+**Steps:**
+1. Define a `Reportable` interface with `Title() string` and `CSV() []byte`
+2. Rewrite `sendReport(r Reportable)` to use the interface
+3. Create a `fakeReport` struct in the same file that implements only those two methods
+4. Show that the real `ReportGenerator` satisfies `Reportable` without modification
+
+```go
+// Before: locked to one type
+// func sendReport(rg *ReportGenerator) { ... }
+
+// After: accepts anything with Title + CSV
+type Reportable interface {
+    Title() string
+    CSV() []byte
+}
+func sendReport(r Reportable) {
+    fmt.Printf("Sending: %s (%d bytes)\n", r.Title(), len(r.CSV()))
+}
+
+// In tests — no ReportGenerator needed
+type fakeReport struct{}
+func (f fakeReport) Title() string { return "Test Report" }
+func (f fakeReport) CSV() []byte   { return []byte("a,b,c") }
+```
+
+**Expected output:**
+```
+Sending: Q3 Sales Report (1024 bytes)
+Sending: Test Report (5 bytes)
+```
+
+**Checkpoint:** Verify the function compiles with both types. Add a third method to `Reportable` that `fakeReport` does not implement — confirm the compile error.
+
+---
+
+### Lab 7: Interface Anti-Patterns
+
+**What you'll practise:** Identifying and fixing the three most common interface design mistakes.
+
+**Task:**
+Examine three anti-patterns, explain why each is wrong, and implement the correct alternative.
+
+**Steps:**
+1. **Too large:** Show an 8-method `UserRepository` interface. Split into `UserReader` (2 methods) and `UserWriter` (2 methods)
+2. **Constructor returning interface:** Show `NewStore() StoreInterface`. Change it to return `*SQLStore`
+3. **any as shortcut:** Show `func Process(v any) any`. Change it to accept a typed interface
+
+```go
+// Anti-pattern 1: bloated interface
+type UserRepository interface {
+    FindAll() []User; FindByID(int) (User, error)
+    FindByEmail(string) (User, error); Save(User) error
+    Delete(int) error; Count() int
+    Paginate(int, int) []User; Search(string) []User
+}
+
+// Better: split by caller need
+type UserReader interface {
+    FindByID(int) (User, error)
+    FindByEmail(string) (User, error)
+}
+type UserWriter interface {
+    Save(User) error
+    Delete(int) error
+}
+```
+
+**Expected output:**
+```
+UserReader has 2 methods — easy to implement a fake
+UserWriter has 2 methods — test writes independently
+Constructor returns *SQLStore — caller can access all methods
+```
+
+**Checkpoint:** Write a test double that implements only `UserReader`. Confirm it cannot be passed where `UserRepository` is expected — the compiler error message is the lesson.
+
+---
+
+### Lab 8: Building a Notifier System
+
+**What you'll practise:** Designing a pluggable notification system using interfaces as the central abstraction.
+
+**Task:**
+Define a `Notifier` interface. Implement `LogNotifier`, `MultiNotifier`, and `RetryNotifier`. Wire them together and test using only the `LogNotifier` fake — no real network calls.
+
+**Steps:**
+1. Define `Message` struct and `Notifier` interface
+2. Implement `LogNotifier` that records messages in a slice and prints to stdout
+3. Implement `MultiNotifier` that fans out to N notifiers, collecting all errors
+4. Implement `RetryNotifier` wrapping any `Notifier`, retrying up to 3 times on error
+5. Wire: `RetryNotifier{Wrapped: MultiNotifier{log1, log2}}` — send 3 messages
+
+```go
+type Message struct {
+    Level   string
+    Subject string
+    Body    string
+}
+
+type Notifier interface {
+    Notify(msg Message) error
+}
+
+type LogNotifier struct {
+    Sent []Message
+}
+
+func (l *LogNotifier) Notify(msg Message) error {
+    l.Sent = append(l.Sent, msg)
+    fmt.Printf("[LOG] %s: %s\n", msg.Level, msg.Subject)
+    return nil
+}
+```
+
+**Expected output:**
+```
+[LOG] info: Welcome
+[LOG] info: Welcome
+[LOG] warn: Disk full
+[LOG] warn: Disk full
+Sent 2 messages to 2 notifiers
+```
+
+**Checkpoint:** Make the first call to `LogNotifier.Notify` return `errors.New("transient failure")`. Verify `RetryNotifier` retries and succeeds on attempt 2, printing the retry count.
+
+---
+
 ## Day Project: Interface Showcase — Advanced
 
 Build a pluggable notification system:

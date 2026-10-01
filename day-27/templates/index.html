@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Book Store</title>
+    <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div class="container">
+    <h1>Go Book Store</h1>
+    <p class="build-time">Build: {{.BuildTime}}</p>
+
+    <form class="search" method="GET" action="/">
+        <input type="search" name="q" value="{{.Query}}" placeholder="Search products…" autocomplete="off">
+        <button type="submit">Search</button>
+        {{- if .Query}}
+        <a href="/" class="clear-link">Clear</a>
+        {{- end}}
+    </form>
+
+    {{if .Products -}}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Price</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+        {{- range .Products}}
+        <tr class="{{if .InStock}}in-stock{{else}}out-stock{{end}}">
+            <td>{{.Name | upper}}</td>
+            <td>${{.Price | formatPrice}}</td>
+            <td>{{if .InStock}}In Stock{{else}}Out of Stock{{end}}</td>
+        </tr>
+        {{- end}}
+        </tbody>
+    </table>
+    <p class="result-count">
+        {{len .Products}} result(s){{if .Query}} matching <strong>{{.Query}}</strong>{{end}}
+    </p>
+    {{- else}}
+    <p class="no-results">
+        No products found{{if .Query}} for &#34;{{.Query}}&#34;{{end}}.
+        <a href="/">Show all</a>
+    </p>
+    {{- end}}
+</div>
+<script src="/assets/script.js"></script>
+</body>
+</html>
