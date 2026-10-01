@@ -284,34 +284,332 @@ Rules:
 
 ## 8. Multi-Module Workspaces
 
-Workspaces (added in Go 1.18) solve a specific and common problem: **how do you develop two modules at the same time without hacking your `go.mod`?**
+Workspaces were added in Go 1.18. To understand why they exist and why they matter, you first need to understand the problem they were designed to fix.
 
-### The Problem Workspaces Solve
+### A Brief History: From GOPATH to Modules to Workspaces
 
-Imagine you maintain a library (`mylib`) and an application that uses it (`myapp`). The app's `go.mod` refers to the published version of the library:
+**The GOPATH era (pre-1.11):** All Go code lived in a single directory tree at `$GOPATH/src`. You cloned every dependency there by hand. There was no versioning — if two projects needed different versions of the same library, you were stuck. Dependency management was a constant source of pain.
 
+**The modules era (1.11+):** `go mod` solved versioning. Each project got its own `go.mod` declaring its exact dependencies. `go.sum` locked cryptographic hashes. This was a huge improvement — but it introduced a new friction: **modules are completely isolated from each other by design.** When you work on a library and an app that uses it at the same time, isolation becomes an obstacle.
+
+**The workspace era (1.18+):** Workspaces solve the cross-module development problem without compromising the module system's guarantees.
+
+---
+
+### The Core Problem: Developing Two Modules Simultaneously
+
+This is the scenario every library author faces. You maintain:
+
+- `github.com/yourname/mylib` — a library you publish
+- `github.com/yourname/myapp` — an application that depends on your library
+
+`myapp/go.mod`:
 ```
 require github.com/yourname/mylib v1.2.0
 ```
 
-Now you need to change both the library and the app at the same time — a new feature in the library that the app immediately needs. Your options before workspaces were:
+Now you need to add a new function to `mylib` and immediately use it in `myapp`. The library change is not yet published — it only exists on your disk. What do you do?
 
-**Option A — `replace` directive (messy)**
+---
+
+### The Pre-Workspace Solutions (and Why They Were All Bad)
+
+#### Approach 1: Publish a test release
+
+Tag the library as `v1.3.0-rc1`, push, then `go get github.com/yourname/mylib@v1.3.0-rc1` in the app.
+
+**Problems:** You pollute the public version history with every iteration. You need network access to test. Every typo means a new tag. If the module proxy caches a broken RC, users may fetch it.
+
+#### Approach 2: `replace` directive
 
 Edit `myapp/go.mod`:
 ```
-replace github.com/yourname/mylib => ../mylib
+replace github.com/yourname/mylib v1.2.0 => ../mylib
 ```
-This makes `go` use the local directory instead of the published version. It works, but you must remember to remove it before pushing. If you forget, your published module points to a local path that doesn't exist for anyone else.
 
-**Option B — Workspaces (clean)**
+This tells Go to use the local directory instead of the registry. It works, but:
+
+- **You must remove it before committing.** If you forget and push, anyone who clones your repo gets a `go.mod` pointing to a path that does not exist on their machine. The build breaks for everyone else.
+- **CI breaks silently.** Your CI pipeline will fail with a confusing "cannot find module" error, not "hey, you left a local replace in".
+- **It modifies a file you must commit.** `go.mod` is a contract. Polluting it with local development hacks violates the separation of concerns.
+- **Multiple modules get messy fast.** If you're co-developing three modules, you need three `replace` directives in every `go.mod` that depends on them, and you must clean them all up before each push.
+
+This approach was used by almost everyone before workspaces. Teams had pre-commit hooks to detect leftover `replace` directives. People got burned regularly.
+
+#### Approach 3: Symlinks
+
+Some developers symlinked the module cache entry to the local directory. This is fragile, platform-specific, and breaks `go mod tidy`.
+
+---
+
+### The Workspace Solution: Separation of Concerns
+
+Workspaces move the local-development override **out of `go.mod` and into a separate file that you never commit.**
 
 ```bash
-# In the parent directory that contains both mylib/ and myapp/:
+# One time, in the parent directory containing both modules:
 go work init ./mylib ./myapp
 ```
 
-No changes to either module's `go.mod`. The workspace file lives outside both modules.
+This creates `go.work`:
+```
+go 1.23
+
+use (
+    ./mylib
+    ./myapp
+)
+```
+
+`go.mod` in both modules is **untouched**. It still refers to `v1.2.0`. The workspace file is a local override layer that sits above the module system.
+
+When Go sees a `go.work` file (by walking up the directory tree from where you run commands), it switches into workspace mode:
+
+1. Any `use`-d directory whose `go.mod` module path matches an import is resolved from disk — not the cache
+2. Everything else resolves normally via the module graph
+
+```bash
+# myapp can now import the local, unpublished version of mylib:
+go run ./myapp     # works!
+go test ./...      # tests both modules
+```
+
+When you're done, you publish `mylib v1.3.0`, update `myapp/go.mod` to `require ... v1.3.0`, and never touch `go.work` — because it's not versioned.
+
+---
+
+### The Four Scenarios Where Workspaces Shine
+
+**1. Library + consumer co-development** (the core use case)
+You're building a feature that spans a library and an app. Workspace lets you iterate locally without publishing.
+
+**2. Microservice monorepo**
+Your organisation keeps 10 services in one repo. Each is an independent module (`svc/auth`, `svc/billing`, `svc/notifications`) plus a shared library (`lib/shared`). A workspace at the repo root lets you run `go test ./...` across every service, catch cross-module breakage in CI, and develop locally without any hacks.
+
+**3. Plugin systems**
+Your app supports plugins that are separate modules. During plugin development you want to run the app against the local plugin source. A workspace that includes both resolves the problem.
+
+**4. Large curriculum or tutorial repos** (like this one)
+Each day is an independent module so learners can `cd day-05 && go run .` in isolation. But a workspace at the root lets a learner (or CI) run `go test ./...` across all days simultaneously. Both things are true at once, without compromise.
+
+---
+
+### How the Toolchain Discovers the Workspace
+
+Go walks **up** the directory tree from your current working directory looking for `go.work`. The first one found takes effect. This means:
+
+```
+workspace-root/          ← go.work lives here
+├── mylib/
+│   ├── go.mod
+│   └── lib.go
+└── myapp/
+    ├── go.mod
+    └── main.go
+```
+
+Running `go build .` from inside `myapp/` still finds the workspace at `workspace-root/go.work`. You don't need to be at the root.
+
+If no `go.work` is found, Go operates in normal module mode.
+
+---
+
+### Anatomy of a Workspace
+
+`go work init` creates `go.work` in the current directory:
+
+```
+go 1.23
+
+use (
+    ./mylib    ← relative path to a module directory (contains go.mod)
+    ./myapp    ← relative path to another module directory
+)
+```
+
+- **`go`** — the Go version the workspace requires (same as `go.mod`)
+- **`use`** — lists every module directory that is part of this workspace; relative paths from the `go.work` file's location
+
+When the Go toolchain runs inside a workspace, it builds a **combined module graph**: it takes the `require` lists from every `use`-d module's `go.mod`, merges them, and uses local disk paths (not the module cache) for any module listed in `use`.
+
+So when `myapp` imports `github.com/yourname/mylib`, Go finds `mylib` in `./mylib` — your local source — instead of downloading the cached version.
+
+---
+
+### Step-by-Step: Creating a Workspace from Scratch
+
+```bash
+mkdir workspace-demo && cd workspace-demo
+
+# Create the library module
+mkdir mylib && cd mylib
+go mod init github.com/yourname/mylib
+cat > lib.go << 'EOF'
+package mylib
+
+func Greet(name string) string {
+    return "Hello, " + name + "!"
+}
+EOF
+cd ..
+
+# Create the application module
+mkdir myapp && cd myapp
+go mod init github.com/yourname/myapp
+cat > main.go << 'EOF'
+package main
+
+import (
+    "fmt"
+    "github.com/yourname/mylib"
+)
+
+func main() {
+    fmt.Println(mylib.Greet("Gopher"))
+}
+EOF
+cd ..
+
+# Without a workspace, go run ./myapp would fail — mylib isn't published
+# Create the workspace:
+go work init ./mylib ./myapp
+
+# Now it works — mylib is resolved from disk:
+go run ./myapp       # prints: Hello, Gopher!
+go test ./mylib/...  # tests the library
+go test ./...        # tests everything in the workspace
+```
+
+Now make a breaking change in `mylib` — rename `Greet` to `SayHello`. You will see a compile error in `myapp` immediately, before publishing anything. That's the point.
+
+---
+
+### `go work` Commands
+
+```bash
+go work init ./mod1 ./mod2   # create go.work with these modules
+go work use ./mod3           # add a module to an existing workspace
+go work use -r .             # add all modules found recursively under current dir
+go work sync                 # update go.mod files so they can build without the workspace
+go work edit -json           # print the workspace as JSON (inspect without editing)
+go work edit -dropuse=./old  # remove a module from the workspace
+```
+
+`go work sync` is particularly useful before publishing: it propagates the workspace's resolved versions back into each module's `go.mod` so the modules can build independently.
+
+---
+
+### `go.work.sum` — The Workspace Lock File
+
+Just like `go.sum` locks dependency hashes for a module, `go.work.sum` locks the hashes of dependencies that come from modules not listed in any individual `go.mod` (i.e., extra deps pulled in by the merged workspace graph).
+
+```
+go.work        ← commit to version control? Usually NO (it's a local dev tool)
+go.work.sum    ← commit? Only if you commit go.work
+```
+
+In this curriculum the `go.work` is committed because it is the mechanism that lets you run `go test ./...` from the root. But in a typical project you would add `go.work` to `.gitignore` and each developer maintains their own workspace locally.
+
+---
+
+### How Module Resolution Works in Workspace Mode
+
+When a `go.work` is found, the toolchain switches into **workspace mode**. Resolution priority:
+
+1. **`use` directories** — if a module path matches a `use`-d directory's `go.mod`, use that directory's source code (local disk, no network)
+2. **`replace` directives** — in any of the workspace modules' `go.mod` files (processed after workspace `use`)
+3. **Module cache** — `$GOPATH/pkg/mod/` (downloaded from the proxy)
+
+This means workspace `use` overrides the cache — exactly what you want for local co-development.
+
+---
+
+### Disabling Workspace Mode
+
+```bash
+GOWORK=off go build .   # ignore go.work for this command
+```
+
+This is critical in CI. Your pipeline should verify each module builds with its declared `go.mod` dependencies — not against local paths that exist only on a developer's machine. Add `GOWORK=off` to your CI environment variables or pipeline config.
+
+You can also point to a different workspace file: `GOWORK=/path/to/other/go.work`.
+
+---
+
+### Workspaces vs Other Ecosystems
+
+Go is not the first language to solve this problem. Here is how the solutions compare:
+
+| Ecosystem | Mechanism | Go equivalent |
+|-----------|-----------|---------------|
+| npm / yarn | `workspaces` in `package.json` | `go.work` |
+| Cargo (Rust) | `[workspace]` in `Cargo.toml` | `go.work` |
+| Maven | Multi-module POM | `go.work` |
+| Gradle | `settings.gradle` + subprojects | `go.work` |
+
+The key difference: in Go, **workspaces are purely a local development tool**. Cargo and npm workspaces are part of the published package definition — a Cargo workspace affects what gets published. Go workspaces do not. Each Go module still publishes and versions independently; the workspace only affects local builds.
+
+This is intentional. It keeps the module system's guarantees clean: a `go.mod` is a precise, reproducible contract. The workspace is just a convenience layer that does not leak into that contract.
+
+---
+
+### Common Misconceptions
+
+**"I'll just use one big module instead of a workspace."**
+You can — and for many projects that's the right call. The tradeoff: a single module means a single version. If you want to version `mylib` and `myapp` independently (library at v2, app at v1), they must be separate modules. If shared versioning is fine, one module is simpler.
+
+**"Do I need a workspace for a monorepo?"**
+Only if you have multiple modules. A monorepo with a single `go.mod` at the root doesn't need a workspace. Once you split into separate modules (for independent versioning, clearer boundaries, or different external dependencies), a workspace makes them easy to develop together.
+
+**"Workspaces replace `replace` directives entirely."**
+Workspaces are for local development. `replace` directives in `go.mod` still have uses: forking a published dependency for a long-running patch, pointing at a private mirror, or substituting one module path for another in published code. But for "I want to develop module A against my local copy of module B", workspaces are always the cleaner choice.
+
+**"CI should use the workspace."**
+No. CI should build each module independently with `GOWORK=off`. The workspace is a local convenience. CI should verify that `go.mod` is correct and self-contained.
+
+---
+
+### This Repo's Workspace
+
+```
+zero2hero-golang/
+├── go.work        ← workspace root
+├── day-01/go.mod  ← use ./day-01
+├── day-02/go.mod  ← use ./day-02
+│   …
+├── day-34/go.mod  ← use ./day-34
+└── capstone/
+    ├── grep/go.mod
+    └── …
+```
+
+The `go.work` lists all 34 day modules and 6 capstone modules. This gives you:
+
+```bash
+# From the workspace root — no cd needed:
+go run ./day-01          # run day 1
+go test ./day-13/...     # test day 13
+go test ./...            # test every day and capstone simultaneously
+go build ./...           # build everything to check for compile errors
+go vet ./...             # vet every package in the workspace
+```
+
+Without the workspace you would have to `cd` into each day and run commands there. The workspace makes the entire curriculum feel like one coherent project, while keeping each day fully independent and self-contained.
+
+---
+
+### When to Use Workspaces vs Other Approaches
+
+| Situation | Best approach |
+|-----------|--------------|
+| Co-developing a lib and its consumer locally | **Workspace** (`go work init`) |
+| Publishing a fork of a dep as a temporary patch | `replace` in `go.mod` (remove before publishing) |
+| Monorepo where all modules are always developed together | **Workspace** committed to the repo |
+| CI/CD pipeline building a single module | `GOWORK=off` or no `go.work` in the repo |
+| Vendoring all deps for air-gapped builds | `go mod vendor` (no workspace needed) |
+| Single project, no independent versioning needed | Single `go.mod`, no workspace |
+
+---
 
 ---
 
