@@ -4,7 +4,7 @@ A project-based path from absolute beginner to production-minded Go developer, p
 
 ---
 
-## Week 1: Foundations (Days 1–7)
+## Week 1: Foundations (Days 1–7, 32)
 
 | Day | Topic | Project |
 |-----|-------|---------|
@@ -15,8 +15,9 @@ A project-based path from absolute beginner to production-minded Go developer, p
 | [05](day-05/README.md) | Arrays, slices, strings, `strings` package | String Statistics Tool |
 | [06](day-06/README.md) | Maps, method sets, comma-ok idiom, embedded structs | Word Frequency Counter |
 | [07](day-07/README.md) | Packages, exported identifiers, `go.mod` and dependencies | Multi-package library |
+| [32](day-32/README.md) | Idiomatic project structure: flat, `cmd/`, `internal/`, domain-driven layout | Restructure the notes API |
 
-**Milestone:** You understand Go's core model — value semantics, explicit pointers, and why the language is deliberately small.
+**Milestone:** You understand Go's core model — value semantics, explicit pointers, and why the language is deliberately small. You can also structure a Go project idiomatically from day one.
 
 ---
 
@@ -70,15 +71,16 @@ A project-based path from absolute beginner to production-minded Go developer, p
 
 ---
 
-## Advanced Golang Concepts (Days 31–35)
+## Advanced Golang Concepts (Days 31, 33–35)
 
 | Day | Topic | Project |
 |-----|-------|---------|
 | [31](day-31/README.md) | Interfaces: composition, nil trap, stdlib catalogue, accept-interfaces/return-structs, mocking, anti-patterns | Pluggable notification system |
-| [32](day-32/README.md) | Idiomatic project structure: flat, `cmd/`, `internal/`, domain-driven layout, anti-patterns | Restructure the notes API |
 | [33](day-33/README.md) | Channel model: pipelines, fan-out/in, done channels, `select`, direction types, common mistakes | Channel-based text pipeline + word counter |
 | [34](day-34/README.md) | Goroutines & sync: `Mutex`, `RWMutex`, `WaitGroup`, `Once`, `atomic`, `sync.Map`, `errgroup`, deadlocks | Concurrent download manager |
 | [35](day-35/README.md) | Context deep dive: tree propagation, values, middleware, DB ops, leak detection, testing patterns | Request-scoped pipeline |
+
+> Day 32 (Idiomatic Project Structure) appears in **Week 1** — learning to structure Go projects well is a foundational skill, not an advanced one.
 
 ---
 

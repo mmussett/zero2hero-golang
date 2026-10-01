@@ -45,14 +45,14 @@ go test ./...
 
 | Week | Focus |
 |------|-------|
-| 1 | Foundations — toolchain, types, control flow, pointers, slices, maps, packages |
+| 1 | Foundations — toolchain, types, control flow, pointers, slices, maps, packages, project structure |
 | 2 | Core Language — interfaces, errors, generics, closures, testing |
 | 3 | Intermediate — goroutines, channels, context, file I/O, JSON, CLI, HTTP |
 | 4 | Production — REST APIs, databases, observability, benchmarking, deployment |
 
 ## Weekly Milestones
 
-**Week 1:** You understand Go's core model — value semantics, explicit pointers, and why the language is deliberately small.
+**Week 1:** You understand Go's core model — value semantics, explicit pointers, and why the language is deliberately small. You can structure a Go project idiomatically from day one.
 
 **Week 2:** You can model any domain idiomatically and handle errors without panicking.
 

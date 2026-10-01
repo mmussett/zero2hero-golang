@@ -10,11 +10,11 @@ A self-paced, project-based 34-day curriculum moving from absolute beginner to p
 
 | Week | Days | Theme |
 |------|------|-------|
-| [Week 1 — Foundations](#week-1--foundations) | 1–7 | Toolchain, types, slices, maps, pointers, packages |
+| [Week 1 — Foundations](#week-1--foundations) | 1–7, 32 | Toolchain, types, slices, maps, pointers, packages, project structure |
 | [Week 2 — Core Language](#week-2--core-language) | 8–14 | Interfaces, errors, generics, closures, testing |
 | [Week 3 — Intermediate](#week-3--intermediate) | 15–21 | Goroutines, channels, context, file I/O, JSON, CLI, HTTP |
 | [Week 4 — Production](#week-4--production) | 22–30 | REST APIs, databases, observability, benchmarking, deployment |
-| [Advanced Golang Concepts](#advanced-golang-concepts) | 31–35 | Interfaces, project structure, channels, goroutines & sync, context |
+| [Advanced Golang Concepts](#advanced-golang-concepts) | 31, 33–35 | Interfaces, channels, goroutines & sync, context |
 
 → [Full curriculum overview](/zero2hero-golang/CURRICULUM/)
 
@@ -29,6 +29,7 @@ A self-paced, project-based 34-day curriculum moving from absolute beginner to p
 - [Day 05: Arrays, Slices & Strings](/zero2hero-golang/day-05/)
 - [Day 06: Maps and Method Sets](/zero2hero-golang/day-06/)
 - [Day 07: Packages and Modules](/zero2hero-golang/day-07/)
+- [Day 32: Idiomatic Go Project Structure](/zero2hero-golang/day-32/)
 
 ## Week 2 — Core Language
 
@@ -66,10 +67,11 @@ A self-paced, project-based 34-day curriculum moving from absolute beginner to p
 
 ## Advanced Golang Concepts
 
-Five deep-dive days covering topics that deserve more space than the main curriculum allows.
+Four deep-dive days covering topics that deserve more space than the main curriculum allows.
+
+> Day 32 (Idiomatic Project Structure) is taught in **Week 1** — structuring Go projects well is a foundational skill.
 
 - [Day 31: Go Interfaces — The Complete Picture](/zero2hero-golang/day-31/)
-- [Day 32: Idiomatic Go Project Structure](/zero2hero-golang/day-32/)
 - [Day 33: The Go Channel Model](/zero2hero-golang/day-33/)
 - [Day 34: Goroutines, Concurrency & Synchronisation](/zero2hero-golang/day-34/)
 - [Day 35: The Go Context Model — Deep Dive](/zero2hero-golang/day-35/)
