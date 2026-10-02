@@ -1,401 +1,690 @@
-# Day 31: Capstone
+# Day 31: Go Interfaces — The Complete Picture
 
-## You Made It
+## Core Concept: Behaviour, Not Identity
 
-Thirty days of deliberate practice. You have built:
+An interface in Go is a contract expressed as a set of method signatures. A type satisfies the contract by implementing the methods — no declaration, no inheritance, no keyword. This is Go's most powerful design decision.
 
-- A concurrent file hasher, a thread-safe LRU cache, a cancellable HTTP downloader
-- A full CRUD REST API with middleware, structured logging, and a SQLite backing store
-- A CLI tool with subcommands
-- Benchmarks, profiles, and an embedded-assets server
+> "The bigger the interface, the weaker the abstraction." — Rob Pike
 
-Now build something that is entirely yours.
+---
 
-## Skills You Have
+## Part 1: Fundamentals Revisited
 
-| Week | What You Can Do Now |
-|------|---------------------|
-| 1 | Model any domain with structs, slices, maps, and packages |
-| 2 | Write idiomatic interfaces, handle errors cleanly, use generics |
-| 3 | Write concurrent programs, build CLI tools, serve HTTP |
-| 4 | Build, instrument, profile, containerise, and publish a Go service |
+### Interface Mechanics
 
-## Capstone Options
+```go
+type Writer interface {
+    Write(p []byte) (n int, err error)
+}
+```
 
-**Small (2–3 days)** — CLI tools
-- A `grep` replacement: recursive regex search with coloured, numbered output
-- A password generator/manager storing entries encrypted with `crypto/aes`
-- A Markdown renderer that outputs ANSI-formatted text to the terminal
+An interface value is a pair: `(type, value)`. When you assign a concrete value to an interface variable, Go stores a pointer to the type descriptor and a pointer to the value.
 
-**Medium (1–2 weeks)** — Web services
-- A URL shortener: `POST /shorten` returns a short code, `GET /{code}` redirects; backed by SQLite
-- A personal finance tracker: CSV import, category tagging, monthly summaries as a REST API
-- A WebSocket chat server with named rooms using `golang.org/x/net/websocket`
+```go
+var w Writer = os.Stdout   // type=*os.File, value=<ptr>
+w.Write([]byte("hello"))   // dynamic dispatch via type descriptor
+```
 
-**Large (2–4 weeks)** — Substantial projects
-- A static site generator: Markdown → HTML with templates, partials, and `--serve` live-reload
-- A bitcask-inspired key-value database: WAL, compaction, HTTP API
-- A concurrent web crawler: configurable depth, robots.txt respect, deduplicated output
+### The Nil Interface Trap
 
-## Planning Checklist
+The most common interface gotcha in Go:
 
-Before writing code:
+```go
+func newError() error {
+    var p *os.PathError = nil
+    return p          // DANGER: interface is NOT nil!
+}
 
-- [ ] Define your core types (`Note`, `Account`, `Page`, …)
-- [ ] Choose dependencies deliberately — prefer the standard library
-- [ ] Design your error types with custom sentinels
-- [ ] Write at least one test before any handler
-- [ ] Initialise `slog` on day one
-- [ ] Write a `Dockerfile` before shipping
+err := newError()
+fmt.Println(err == nil)  // false — type is set, value is nil
+```
+
+An interface is `nil` only when **both** its type and value are nil. Returning a typed nil pointer as an interface always produces a non-nil interface.
+
+**Fix:** return `nil` directly, not a typed nil:
+
+```go
+func newError() error {
+    return nil  // correct
+}
+```
+
+---
+
+## Part 2: Interface Composition
+
+Interfaces can embed other interfaces to form supersets:
+
+```go
+type Reader interface { Read(p []byte) (n int, err error) }
+type Writer interface { Write(p []byte) (n int, err error) }
+type Closer interface { Close() error }
+
+// Composed interfaces
+type ReadWriter  interface { Reader; Writer }
+type ReadCloser  interface { Reader; Closer }
+type WriteCloser interface { Writer; Closer }
+type ReadWriteCloser interface { Reader; Writer; Closer }
+```
+
+A function accepting `io.Reader` is more reusable than one accepting `io.ReadWriter` — request only what you need.
+
+---
+
+## Part 3: The Standard Library Interface Catalogue
+
+### Formatting Interfaces (`fmt` package)
+
+| Interface | Method | Trigger |
+|-----------|--------|---------|
+| `fmt.Stringer` | `String() string` | `%s`, `%v` |
+| `fmt.GoStringer` | `GoString() string` | `%#v` |
+| `fmt.Formatter` | `Format(f State, verb rune)` | any `%` verb |
+| `error` | `Error() string` | `%v`, `%s` on error |
+
+### I/O Interfaces (`io` package)
+
+| Interface | Methods | Usage |
+|-----------|---------|-------|
+| `io.Reader` | `Read([]byte) (int, error)` | Anything readable |
+| `io.Writer` | `Write([]byte) (int, error)` | Anything writable |
+| `io.Closer` | `Close() error` | Resources that must be released |
+| `io.Seeker` | `Seek(int64, int) (int64, error)` | Random access |
+| `io.ByteReader` | `ReadByte() (byte, error)` | Single-byte reading |
+| `io.RuneReader` | `ReadRune() (rune, int, error)` | Unicode reading |
+| `io.WriterTo` | `WriteTo(Writer) (int64, error)` | Efficient copy optimisation |
+| `io.ReaderFrom` | `ReadFrom(Reader) (int64, error)` | Efficient copy optimisation |
+
+### Encoding Interfaces
+
+| Interface | Methods | Package |
+|-----------|---------|---------|
+| `encoding.TextMarshaler` | `MarshalText() ([]byte, error)` | `encoding` |
+| `encoding.TextUnmarshaler` | `UnmarshalText([]byte) error` | `encoding` |
+| `json.Marshaler` | `MarshalJSON() ([]byte, error)` | `encoding/json` |
+| `json.Unmarshaler` | `UnmarshalJSON([]byte) error` | `encoding/json` |
+
+### Sorting (`sort` package)
+
+```go
+type Interface interface {
+    Len() int
+    Less(i, j int) bool
+    Swap(i, j int)
+}
+```
+
+### HTTP (`net/http`)
+
+```go
+type Handler interface {
+    ServeHTTP(ResponseWriter, *Request)
+}
+```
+
+`http.HandlerFunc` is a type that adapts a function to the `Handler` interface — Go's adapter pattern in one line of stdlib.
+
+---
+
+## Part 4: Type Assertions and Type Switches
+
+### Safe Type Assertion
+
+```go
+var r io.Reader = &bytes.Buffer{}
+
+// Two-value form: safe
+bw, ok := r.(*bytes.Buffer)
+if ok {
+    fmt.Println("have buffer:", bw.Len())
+}
+
+// One-value form: panics if wrong type
+bw2 := r.(*bytes.Buffer)
+```
+
+### Type Switch
+
+Dispatches on the dynamic type of an interface value:
+
+```go
+func printType(v any) {
+    switch x := v.(type) {
+    case nil:
+        fmt.Println("nil")
+    case int:
+        fmt.Printf("int: %d\n", x)
+    case string:
+        fmt.Printf("string: %q\n", x)
+    case []int:
+        fmt.Printf("[]int with %d elements\n", len(x))
+    case fmt.Stringer:
+        fmt.Printf("Stringer: %s\n", x.String())
+    default:
+        fmt.Printf("unknown: %T\n", x)
+    }
+}
+```
+
+Order matters — interfaces listed earlier match first.
+
+---
+
+## Part 5: Idiomatic Interface Design
+
+### Rule 1: Accept Interfaces, Return Structs
+
+```go
+// Good: caller can pass any Writer
+func SaveConfig(w io.Writer, cfg Config) error { ... }
+
+// Bad: locks caller to *os.File
+func SaveConfig(f *os.File, cfg Config) error { ... }
+```
+
+Return concrete types from constructors so callers can access the full API. Return interfaces only when the caller genuinely needs polymorphism.
+
+### Rule 2: Keep Interfaces Small
+
+One or two methods is almost always better than three or more. The `io` package is a masterclass:
+
+```go
+type Reader interface { Read([]byte) (int, error) }  // one method
+type Writer interface { Write([]byte) (int, error) }  // one method
+```
+
+### Rule 3: Define Interfaces at the Point of Use
+
+Define interfaces in the **consumer** package, not the producer. The producer returns a concrete type; the consumer declares the slice of the API it needs.
+
+```go
+// In package store: returns concrete type
+func (s *Store) Open() *Connection { ... }
+
+// In package handler: defines only what it needs
+type Opener interface {
+    Open() *Connection
+}
+```
+
+This prevents import cycles and keeps interfaces honest.
+
+### Rule 4: Don't Pre-Optimise with Interfaces
+
+If you only have one implementation, use the concrete type. Add an interface when:
+- You have two or more implementations
+- You need to mock in tests
+- You need to decouple packages
+
+---
+
+## Part 6: Interface Embedding in Structs
+
+```go
+type LoggingWriter struct {
+    io.Writer
+    log *slog.Logger
+}
+
+func (lw *LoggingWriter) Write(p []byte) (int, error) {
+    lw.log.Debug("write", "bytes", len(p))
+    return lw.Writer.Write(p)
+}
+```
+
+The promoted `Write` method is overridden — `io.Copy(lw, src)` calls the logging version. All other methods from the embedded `io.Writer` are promoted unchanged.
+
+---
+
+## Part 7: Mocking with Interfaces for Testing
+
+```go
+// Production code uses interface
+type EmailSender interface {
+    Send(to, subject, body string) error
+}
+
+type WelcomeService struct {
+    email EmailSender
+}
+
+// Test provides a fake
+type fakeSender struct {
+    sent []string
+}
+
+func (f *fakeSender) Send(to, subject, body string) error {
+    f.sent = append(f.sent, to)
+    return nil
+}
+
+func TestWelcome(t *testing.T) {
+    fake := &fakeSender{}
+    svc := &WelcomeService{email: fake}
+    svc.SendWelcome("alice@example.com")
+    assert.Contains(t, fake.sent, "alice@example.com")
+}
+```
+
+---
+
+## Part 8: Interface Anti-Patterns
+
+### Interface Pollution
+
+Defining large, catch-all interfaces:
+
+```go
+// Anti-pattern: too wide, too specific to one implementation
+type Repository interface {
+    FindAll() []User
+    FindByID(id int) (User, error)
+    FindByEmail(email string) (User, error)
+    Save(u User) error
+    Delete(id int) error
+    Count() int
+    Paginate(page, size int) []User
+    Search(query string) []User
+}
+```
+
+Split by caller need: a handler that only reads needs `UserReader`; a cleanup job that only deletes needs `UserDeleter`.
+
+### Returning Interface from Constructor
+
+```go
+// Anti-pattern: hides the concrete type, limits caller
+func NewStore() StoreInterface { return &sqlStore{} }
+
+// Better: return concrete, satisfy interfaces implicitly
+func NewStore() *SQLStore { return &sqlStore{} }
+```
+
+### Using `any` as a Shortcut
+
+```go
+// Anti-pattern: no type safety
+func Process(input any) any { ... }
+
+// Better: generics or concrete types
+func Process[T Processable](input T) T { ... }
+```
+
+---
+
+---
 
 ## Labs
 
-### Lab 1: Project Planning — Pick Your Capstone
+### Lab 1: Implicit Satisfaction
 
-**What you'll practise:** Thinking through scope, data model, and interface before writing a single line of code.
+**What you'll practise:** Defining an interface and satisfying it implicitly, with a compile-time check.
 
 **Task:**
-Review the six capstone options above. Pick one, then sketch its data model and API or command surface on paper (or in a text file) before opening your editor.
+Define a `Quacker` interface with a `Quack() string` method. Create two types — `Duck` and `Person` — that implement it without any explicit declaration. Add compile-time assertion guards to catch mistakes early.
 
 **Steps:**
-1. Re-read the Capstone Options section
-2. Choose a project (Small, Medium, or Large) that fits your available time
-3. Write down your core types — e.g. `type Bookmark struct { ID int; URL string; Tags []string }`
-4. List every API endpoint or CLI subcommand your project will expose
-5. Identify the one external dependency you expect to need (if any)
+1. Create a new file `lab01_quacker.go` in `day-31/`
+2. Define `type Quacker interface { Quack() string }`
+3. Add `Duck` and `Person` structs with `Quack()` methods
+4. Add compile-time checks using the blank identifier
+5. Write a `MakeItQuack(q Quacker)` function and call it from `main`
 
-```
-# Example sketch for a URL bookmark manager
-Types:   Bookmark{ID, URL, Title, Tags, CreatedAt}
-Storage: JSON file (~day-19 pattern) or SQLite (~day-23 pattern)
-CLI:     add <url> [--tag t]   list [--tag t]   delete <id>   export
-HTTP:    POST /bookmarks        GET /bookmarks   DELETE /bookmarks/{id}
+```go
+// Compile-time interface satisfaction checks
+var _ Quacker = (*Duck)(nil)
+var _ Quacker = (*Person)(nil)
+
+type Duck struct{ Name string }
+func (d *Duck) Quack() string { return "Quack! I'm " + d.Name }
+
+type Person struct{ Name string }
+func (p *Person) Quack() string { return "I'm quacking like a duck! — " + p.Name }
 ```
 
 **Expected output:**
-A clear, written sketch you can refer to throughout the following labs. No code yet.
+```
+Quack! I'm Donald
+I'm quacking like a duck! — Bob
+```
 
-**Checkpoint:** You can describe your project's core type, its storage mechanism, and its interface in three sentences without looking at notes.
+**Checkpoint:** Remove the `Quack()` method from `Person` and confirm it fails to compile with a clear error about missing method.
 
 ---
 
-### Lab 2: Module Setup — Scaffolding Your Project
+### Lab 2: Interface Composition
 
-**What you'll practise:** Initialising a Go module, creating the directory structure, and writing stub files that compile cleanly.
+**What you'll practise:** Composing small interfaces into larger ones, mirroring the `io` package design.
 
 **Task:**
-Create the module and directory layout for your chosen capstone. Every file should compile (stubs are fine), and `go build ./...` should succeed.
+Define `Reader`, `Writer`, and `Closer` interfaces. Compose `ReadWriter`, `ReadCloser`, and `ReadWriteCloser`. Implement a `BufferRWC` struct that satisfies all three composed interfaces.
 
 **Steps:**
-1. `mkdir capstone/myproject && cd capstone/myproject`
-2. `go mod init github.com/yourname/myproject`
-3. Create stub files for each package: `main.go`, `store/store.go`, `model/model.go`
-4. Add your module to `go.work`: `go work use ./capstone/myproject`
-5. Run `go build ./...` and confirm no errors
-
-```
-myproject/
-├── go.mod
-├── main.go          ← package main, imports store and model
-├── model/
-│   └── model.go     ← core types
-└── store/
-    └── store.go     ← storage interface + implementation stub
-```
+1. Define three single-method interfaces
+2. Compose them into three combined interfaces
+3. Implement `BufferRWC` with all three methods
+4. Add a function `processRWC(rwc ReadWriteCloser)` that calls all three
+5. Verify `*BufferRWC` satisfies all composed interfaces via compile-time checks
 
 ```go
-// store/store.go
-package store
+type Reader  interface { Read()  string }
+type Writer  interface { Write(s string) }
+type Closer  interface { Close() error }
 
-import "github.com/yourname/myproject/model"
+type ReadWriter      interface { Reader; Writer }
+type ReadCloser      interface { Reader; Closer }
+type ReadWriteCloser interface { Reader; Writer; Closer }
 
-type Store interface {
-    Add(item model.Bookmark) (model.Bookmark, error)
-    List() ([]model.Bookmark, error)
-    Delete(id int) error
+// Compile-time checks
+var _ ReadWriteCloser = (*BufferRWC)(nil)
+```
+
+**Expected output:**
+```
+Read: hello
+Written: world
+Closed successfully
+```
+
+**Checkpoint:** Try passing a `*BufferRWC` to a function that accepts `ReadCloser` — it should work. Try passing it to a function that accepts `ReadWriter` — also works. Explain why in a comment.
+
+---
+
+### Lab 3: The Nil Interface Trap
+
+**What you'll practise:** Understanding why a typed nil pointer assigned to an interface is NOT nil.
+
+**Task:**
+Create a custom error type `*ValidationError`. Write a function that conditionally returns it. Demonstrate the trap and then write the correct pattern.
+
+**Steps:**
+1. Define `type ValidationError struct { Field, Message string }`
+2. Implement `func (e *ValidationError) Error() string`
+3. Write `func validateAgeBroken(age int) error` that returns a typed nil when valid
+4. Call it and print `err == nil` — observe it prints `false`
+5. Fix by returning plain `nil` directly
+
+```go
+func validateAgeBroken(age int) error {
+    var err *ValidationError  // typed nil
+    if age < 0 {
+        err = &ValidationError{Field: "age", Message: "must be non-negative"}
+    }
+    return err  // BUG: always returns non-nil interface!
+}
+
+func validateAgeFixed(age int) error {
+    if age < 0 {
+        return &ValidationError{Field: "age", Message: "must be non-negative"}
+    }
+    return nil  // correct: untyped nil
 }
 ```
 
 **Expected output:**
 ```
-$ go build ./...
-(no output — success)
+broken: err == nil → false  (BUG!)
+fixed:  err == nil → true   (correct)
 ```
 
-**Checkpoint:** `go build ./...` exits 0. The module appears in `go.work`. Directory structure matches your sketch from Lab 1.
+**Checkpoint:** Use `fmt.Printf("%T %v\n", err, err)` on the broken version to see the type is `*ValidationError` even though the value is nil.
 
 ---
 
-### Lab 3: Core Data Layer — Storage with Unit Tests
+### Lab 4: Type Assertion
 
-**What you'll practise:** Implementing the storage layer (JSON file, SQLite, or in-memory) and verifying it with unit tests before wiring any interface.
+**What you'll practise:** Safe type assertion with the comma-ok pattern to avoid panics.
 
 **Task:**
-Implement the `Store` interface from Lab 2 with a concrete type (e.g. `JSONStore` or `MemStore`). Write at least three unit tests: add-then-list, delete-then-confirm-missing, and list-empty.
+Write a function `fileInfo(r io.Reader) string` that tries to assert `r` to `*os.File` and returns the filename if successful, or `"(not a file)"` otherwise.
 
 **Steps:**
-1. Implement `Add`, `List`, and `Delete` on your concrete store type
-2. Write `store/store_test.go` with `TestAdd`, `TestDelete`, `TestListEmpty`
-3. Run `go test ./store/...` — all tests must pass
-4. Use table-driven tests for `Delete` (existing ID, non-existing ID)
+1. Import `io`, `os`, `strings`
+2. Write `fileInfo` using the two-value assertion form
+3. Call it with an `*os.File` (opened from a temp file) and with a `*strings.Reader`
+4. Show what happens with the single-value (panicking) form when the assertion fails
 
 ```go
-// store/store_test.go
-func TestAdd(t *testing.T) {
-    s := NewMemStore()
-    got, err := s.Add(model.Bookmark{URL: "https://go.dev"})
-    if err != nil { t.Fatal(err) }
-    if got.ID == 0 { t.Error("expected non-zero ID") }
+func fileInfo(r io.Reader) string {
+    f, ok := r.(*os.File)
+    if !ok {
+        return "(not a file)"
+    }
+    return f.Name()
 }
 
-func TestDeleteMissing(t *testing.T) {
-    s := NewMemStore()
-    err := s.Delete(999)
-    if !errors.Is(err, ErrNotFound) {
-        t.Errorf("want ErrNotFound, got %v", err)
+// Dangerous — only use when you are 100% certain of the type:
+// f := r.(*os.File)  // panics if r is not *os.File
+```
+
+**Expected output:**
+```
+os.File:        /tmp/testfile123
+strings.Reader: (not a file)
+```
+
+**Checkpoint:** Change the comma-ok to single-value form and pass a `*strings.Reader` — confirm the panic message and stack trace.
+
+---
+
+### Lab 5: Type Switch
+
+**What you'll practise:** Using a type switch to handle multiple concrete types from an `any` parameter.
+
+**Task:**
+Write `prettyPrint(v any) string` that formats different types differently. Handle `int`, `string`, `[]string`, `map[string]any`, `fmt.Stringer`, and a default case.
+
+**Steps:**
+1. Write the type switch with all required cases
+2. For `int`: format as `"int(42)"`
+3. For `string`: format as `"string(\"hello\")"`
+4. For `[]string`: format each element with its index
+5. For `map[string]any`: print each key-value pair sorted by key
+6. For `fmt.Stringer`: call `.String()`
+7. Default: use `fmt.Sprintf("%T: %v", v, v)`
+
+```go
+func prettyPrint(v any) string {
+    switch x := v.(type) {
+    case nil:
+        return "<nil>"
+    case int:
+        return fmt.Sprintf("int(%d)", x)
+    case string:
+        return fmt.Sprintf("string(%q)", x)
+    case []string:
+        // your code here
+    case map[string]any:
+        // your code here
+    case fmt.Stringer:
+        return "Stringer: " + x.String()
+    default:
+        return fmt.Sprintf("%T: %v", x, x)
     }
 }
 ```
 
 **Expected output:**
 ```
-$ go test -v ./store/...
---- PASS: TestAdd (0.00s)
---- PASS: TestDeleteMissing (0.00s)
---- PASS: TestListEmpty (0.00s)
-PASS
+<nil>
+int(42)
+string("hello")
+[0]="foo" [1]="bar"
+key1=val1 key2=val2
+Stringer: 2009-11-10 23:00:00 +0000 UTC
 ```
 
-**Checkpoint:** All tests pass. The storage layer has no dependency on HTTP or CLI code.
+**Checkpoint:** Add `bool` as a named case. Verify that the `fmt.Stringer` case matches any type implementing that interface by passing a `time.Time` value.
 
 ---
 
-### Lab 4: Business Logic — TDD Core Operations
+### Lab 6: Small Interface Design
 
-**What you'll practise:** Writing tests before implementation (TDD) for the core business rules of your capstone.
+**What you'll practise:** Narrowing a function's dependency from a large concrete struct to a minimal interface, enabling easier testing.
 
 **Task:**
-Identify two or three business rules in your project (e.g. "duplicate URLs are rejected", "tags are normalised to lowercase", "pagination returns at most 20 items"). Write the test first, watch it fail, then implement.
+You have a `ReportGenerator` struct with many methods. A function `sendReport` only uses `Title()` and `CSV() []byte`. Refactor to accept a small interface instead.
 
 **Steps:**
-1. Pick two business rules specific to your chosen capstone
-2. Write a failing test for each rule in `model/` or `store/`
-3. Implement just enough code to make each test pass
-4. Refactor if needed, keeping tests green
+1. Define a `Reportable` interface with `Title() string` and `CSV() []byte`
+2. Rewrite `sendReport(r Reportable)` to use the interface
+3. Create a `fakeReport` struct in the same file that implements only those two methods
+4. Show that the real `ReportGenerator` satisfies `Reportable` without modification
 
 ```go
-// Example: duplicate URL rejection
-func TestAddDuplicateURL(t *testing.T) {
-    s := NewMemStore()
-    _, err := s.Add(model.Bookmark{URL: "https://go.dev"})
-    if err != nil { t.Fatal(err) }
+// Before: locked to one type
+// func sendReport(rg *ReportGenerator) { ... }
 
-    _, err = s.Add(model.Bookmark{URL: "https://go.dev"})
-    if !errors.Is(err, ErrDuplicate) {
-        t.Errorf("expected ErrDuplicate, got %v", err)
-    }
+// After: accepts anything with Title + CSV
+type Reportable interface {
+    Title() string
+    CSV() []byte
+}
+func sendReport(r Reportable) {
+    fmt.Printf("Sending: %s (%d bytes)\n", r.Title(), len(r.CSV()))
+}
+
+// In tests — no ReportGenerator needed
+type fakeReport struct{}
+func (f fakeReport) Title() string { return "Test Report" }
+func (f fakeReport) CSV() []byte   { return []byte("a,b,c") }
+```
+
+**Expected output:**
+```
+Sending: Q3 Sales Report (1024 bytes)
+Sending: Test Report (5 bytes)
+```
+
+**Checkpoint:** Verify the function compiles with both types. Add a third method to `Reportable` that `fakeReport` does not implement — confirm the compile error.
+
+---
+
+### Lab 7: Interface Anti-Patterns
+
+**What you'll practise:** Identifying and fixing the three most common interface design mistakes.
+
+**Task:**
+Examine three anti-patterns, explain why each is wrong, and implement the correct alternative.
+
+**Steps:**
+1. **Too large:** Show an 8-method `UserRepository` interface. Split into `UserReader` (2 methods) and `UserWriter` (2 methods)
+2. **Constructor returning interface:** Show `NewStore() StoreInterface`. Change it to return `*SQLStore`
+3. **any as shortcut:** Show `func Process(v any) any`. Change it to accept a typed interface
+
+```go
+// Anti-pattern 1: bloated interface
+type UserRepository interface {
+    FindAll() []User; FindByID(int) (User, error)
+    FindByEmail(string) (User, error); Save(User) error
+    Delete(int) error; Count() int
+    Paginate(int, int) []User; Search(string) []User
+}
+
+// Better: split by caller need
+type UserReader interface {
+    FindByID(int) (User, error)
+    FindByEmail(string) (User, error)
+}
+type UserWriter interface {
+    Save(User) error
+    Delete(int) error
 }
 ```
 
 **Expected output:**
 ```
-$ go test ./...
---- FAIL: TestAddDuplicateURL (0.00s)    ← before implementation
-    store_test.go:22: expected ErrDuplicate, got <nil>
-```
-Then after implementing:
-```
---- PASS: TestAddDuplicateURL (0.00s)
+UserReader has 2 methods — easy to implement a fake
+UserWriter has 2 methods — test writes independently
+Constructor returns *SQLStore — caller can access all methods
 ```
 
-**Checkpoint:** You wrote the test before the implementation and watched it go from red to green. All existing tests still pass.
+**Checkpoint:** Write a test double that implements only `UserReader`. Confirm it cannot be passed where `UserRepository` is expected — the compiler error message is the lesson.
 
 ---
 
-### Lab 5: Interface Layer — CLI Commands or HTTP Routes
+### Lab 8: Building a Notifier System
 
-**What you'll practise:** Wiring the storage layer to a CLI (`cobra` or `flag`) or HTTP routes (`net/http` or `chi`), keeping handlers thin.
+**What you'll practise:** Designing a pluggable notification system using interfaces as the central abstraction.
 
 **Task:**
-Implement the interface layer for your capstone. Handlers and commands should contain no business logic — they parse input, call the store, and format output.
+Define a `Notifier` interface. Implement `LogNotifier`, `MultiNotifier`, and `RetryNotifier`. Wire them together and test using only the `LogNotifier` fake — no real network calls.
 
 **Steps:**
-1. For CLI: add subcommands (e.g. `add`, `list`, `delete`) using `flag` subcommands or `cobra`
-2. For HTTP: register routes, parse JSON request bodies, return JSON responses with correct status codes
-3. Keep each handler/command under 20 lines — push logic to the store
-4. Run `go run . add https://go.dev --tag golang` (CLI) or `curl -X POST /bookmarks` (HTTP) to smoke-test
+1. Define `Message` struct and `Notifier` interface
+2. Implement `LogNotifier` that records messages in a slice and prints to stdout
+3. Implement `MultiNotifier` that fans out to N notifiers, collecting all errors
+4. Implement `RetryNotifier` wrapping any `Notifier`, retrying up to 3 times on error
+5. Wire: `RetryNotifier{Wrapped: MultiNotifier{log1, log2}}` — send 3 messages
 
 ```go
-// Thin HTTP handler example
-func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request) {
-    var b model.Bookmark
-    if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-        http.Error(w, err.Error(), http.StatusBadRequest)
-        return
-    }
-    created, err := h.store.Add(b)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusConflict)
-        return
-    }
-    w.WriteHeader(http.StatusCreated)
-    json.NewEncoder(w).Encode(created)
+type Message struct {
+    Level   string
+    Subject string
+    Body    string
+}
+
+type Notifier interface {
+    Notify(msg Message) error
+}
+
+type LogNotifier struct {
+    Sent []Message
+}
+
+func (l *LogNotifier) Notify(msg Message) error {
+    l.Sent = append(l.Sent, msg)
+    fmt.Printf("[LOG] %s: %s\n", msg.Level, msg.Subject)
+    return nil
 }
 ```
 
 **Expected output:**
 ```
-$ go run . add https://go.dev --tag golang
-Added bookmark #1: https://go.dev [golang]
-
-$ go run . list
-#1  https://go.dev  [golang]
+[LOG] info: Welcome
+[LOG] info: Welcome
+[LOG] warn: Disk full
+[LOG] warn: Disk full
+Sent 2 messages to 2 notifiers
 ```
 
-**Checkpoint:** At least two commands or routes work end-to-end. No business logic lives in the handler or command functions.
+**Checkpoint:** Make the first call to `LogNotifier.Notify` return `errors.New("transient failure")`. Verify `RetryNotifier` retries and succeeds on attempt 2, printing the retry count.
 
 ---
 
-### Lab 6: Error Handling and Logging — Production Hygiene
+## Day Project: Interface Showcase — Advanced
 
-**What you'll practise:** Applying Day 24 sentinel error patterns and Day 25 structured logging throughout the project.
+Build a pluggable notification system:
 
-**Task:**
-Add custom sentinel errors, wrap errors with context at every layer boundary, and add `slog` logging so every important operation emits a structured log entry.
+1. Define `Notifier interface { Notify(msg Message) error }`
+2. Implement: `EmailNotifier`, `SlackNotifier`, `LogNotifier` (writes to `slog`)
+3. `MultiNotifier` that fans out to N notifiers, collects errors with `errors.Join`
+4. A `RetryNotifier` that wraps any `Notifier` and retries on failure
+5. A `FilterNotifier` that wraps a `Notifier` and only passes messages matching a predicate
 
-**Steps:**
-1. Define sentinel errors in `store/`: `var ErrNotFound = errors.New("not found")`, `var ErrDuplicate = errors.New("duplicate")`
-2. Wrap errors at the store boundary: `fmt.Errorf("store.Add: %w", ErrDuplicate)`
-3. Initialise a JSON `slog.Logger` in `main` with the service name as a permanent field
-4. Log every add, delete, and list operation at `Info`; log errors at `Error` with the `"err"` attribute
-5. Make log level configurable via `LOG_LEVEL` env var
+Test with the `LogNotifier` as a fake.
 
 ```go
-// In main
-logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-    Level: logLevelFromEnv(),
-})).With("service", "bookmarks")
-slog.SetDefault(logger)
-
-// In handler
-if errors.Is(err, store.ErrNotFound) {
-    slog.Error("bookmark not found", "id", id)
-    http.Error(w, "not found", http.StatusNotFound)
-    return
+type Message struct {
+    Level   string
+    Subject string
+    Body    string
 }
 ```
 
-**Expected output:**
-```
-{"time":"...","level":"INFO","msg":"bookmark added","service":"bookmarks","id":1,"url":"https://go.dev"}
-{"time":"...","level":"ERROR","msg":"bookmark not found","service":"bookmarks","id":999}
-```
-
-**Checkpoint:** Every error path logs at `Error` level with an `"err"` attribute. Happy paths log at `Info`. `errors.Is` correctly identifies sentinel errors across layer boundaries.
-
----
-
-### Lab 7: Polish and Ship — Dockerfile, Graceful Shutdown, --version
-
-**What you'll practise:** Making your capstone production-ready with a multi-stage Dockerfile, graceful HTTP shutdown, and embedded version info.
-
-**Task:**
-Add the final production touches: a multi-stage Dockerfile, graceful shutdown on `SIGTERM`/`SIGINT`, and a `--version` flag with embedded build info.
-
-**Steps:**
-1. Add `var version = "dev"` and a `--version` flag (see Day 29 Lab 1)
-2. Implement graceful shutdown using `http.Server.Shutdown` with a context timeout
-3. Write a multi-stage `Dockerfile` (alpine builder, scratch or alpine runtime)
-4. Write a `README.md` with installation, usage examples, and environment variables
-
-```go
-// Graceful shutdown
-srv := &http.Server{Addr: addr, Handler: mux}
-go func() {
-    if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-        slog.Error("server error", "err", err)
-        os.Exit(1)
-    }
-}()
-
-quit := make(chan os.Signal, 1)
-signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-<-quit
-
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-defer cancel()
-if err := srv.Shutdown(ctx); err != nil {
-    slog.Error("shutdown error", "err", err)
-}
-slog.Info("server stopped gracefully")
-```
-
-**Expected output:**
-```
-$ ./myapp --version
-bookmarks v1.0.0 (built 2024-01-15T10:00:00Z)
-
-$ docker build -t bookmarks . && docker run -p 8080:8080 bookmarks
-{"time":"...","level":"INFO","msg":"server started","addr":":8080","version":"v1.0.0"}
-```
-
-**Checkpoint:** `docker run` starts the server. `curl /health` returns version info. Sending `Ctrl-C` triggers a clean shutdown log line within 10 seconds.
-
----
-
-### Final Lab (Project): Your Capstone — URL Bookmark Manager (Example)
-
-**What you'll practise:** Synthesising all 30 days into a complete, tested, containerised Go application.
-
-**Task:**
-Complete your chosen capstone project, using the URL bookmark manager as the reference example. The finished project must have: working storage, a tested business layer, an HTTP or CLI interface, structured logging, and a Dockerfile.
-
-**Steps:**
-1. Review your Lab 1 sketch — does the implementation match?
-2. Ensure `go test ./...` passes with no failures
-3. Write at least one integration test that exercises the full stack (handler → store)
-4. Run `docker build` and smoke-test every endpoint or command from the `README.md`
-5. Tag `v1.0.0` locally: `git tag v1.0.0`
-
-```bash
-# Smoke-test sequence for the bookmark manager example
-curl -s -X POST http://localhost:8080/bookmarks \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://go.dev","tags":["golang"]}'
-
-curl -s http://localhost:8080/bookmarks | jq .
-
-curl -s -X DELETE http://localhost:8080/bookmarks/1
-
-curl -s http://localhost:8080/health
-```
-
-**Expected output:**
-```
-{"id":1,"url":"https://go.dev","tags":["golang"],"created_at":"2024-01-15T10:00:00Z"}
-[{"id":1,"url":"https://go.dev","tags":["golang"],"created_at":"..."}]
-(empty — 204 No Content)
-{"status":"ok","version":"v1.0.0","build_time":"2024-01-15T10:00:00Z"}
-```
-
-**Checkpoint:** All four smoke-test commands succeed. `go test ./...` is green. `docker build` succeeds and the image is under 20 MB.
-
-**Extension ideas:** add a WebSocket "new bookmark" live feed; implement CSV export; write a GitHub Actions workflow that runs tests and builds the Docker image on every push.
-
-## Closing Thought
-
-Go's difficulty is front-loaded: the module system, explicit error handling, and concurrency model feel unfamiliar at first. But these constraints prevent entire categories of bugs. Your Go code is honest about what can fail, who owns the data, and where the concurrency lives.
-
-That honesty is the point.
+**Extension ideas:** add a `RateLimitedNotifier` using `time.Ticker`; make notifiers configurable via `WithOption` functional options.
 
 ## Official Documentation
 
-- [`crypto/aes`](https://pkg.go.dev/crypto/aes) — AES encryption for the password manager capstone option
-- [`net/http`](https://pkg.go.dev/net/http) — HTTP server and client for web service capstones
-- [`database/sql`](https://pkg.go.dev/database/sql) — SQL database layer for URL shortener and finance tracker
-- [`log/slog`](https://pkg.go.dev/log/slog) — structured logging recommended from day one of any capstone
-- [`text/template`](https://pkg.go.dev/text/template) — template rendering for static site generator capstone
-- [`encoding/json`](https://pkg.go.dev/encoding/json) — JSON serialisation used across all web service capstones
-- [Effective Go](https://go.dev/doc/effective_go) — canonical guide to idiomatic Go
-- [Go Tour](https://go.dev/tour/) — interactive refresher on any concept
-- [Go standard library](https://pkg.go.dev/std) — full index of all standard packages
+- [`io`](https://pkg.go.dev/io) — `Reader`, `Writer`, `Closer`, `Seeker`, `ByteReader`, `RuneReader`, `WriterTo`, `ReaderFrom`, `ReadWriter`, `ReadCloser`, `WriteCloser`, `ReadWriteCloser`
+- [`fmt`](https://pkg.go.dev/fmt) — `Stringer`, `GoStringer`, `Formatter` interfaces; `%s`, `%v`, `%#v` verbs
+- [`sort`](https://pkg.go.dev/sort) — `Interface` (Len, Less, Swap) for custom type sorting
+- [`net/http`](https://pkg.go.dev/net/http) — `Handler`, `HandlerFunc` adapter pattern
+- [`bytes`](https://pkg.go.dev/bytes) — `Buffer` used in type assertion examples
+- [`errors`](https://pkg.go.dev/errors) — `Join` for collecting multiple notifier errors
+- [`encoding`](https://pkg.go.dev/encoding) — `TextMarshaler`, `TextUnmarshaler` interfaces
+- [`encoding/json`](https://pkg.go.dev/encoding/json) — `Marshaler`, `Unmarshaler` interfaces
+- [`log/slog`](https://pkg.go.dev/log/slog) — `Logger` used in `LogNotifier` implementation
+- [Go Blog: Go Interfaces (Rob Pike)](https://go.dev/blog/laws-of-reflection)
+- [Effective Go — Interfaces and other types](https://go.dev/doc/effective_go#interfaces_and_types)
+- [Language Spec — Interface types](https://go.dev/ref/spec#Interface_types)

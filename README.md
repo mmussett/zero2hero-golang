@@ -41,7 +41,7 @@ go run .
 go test ./...
 ```
 
-## Four-Week Progression
+## Five-Week Progression
 
 | Week | Days | Focus |
 |------|------|-------|
@@ -49,7 +49,8 @@ go test ./...
 | 2 | 8–14 | Core Language — project structure, interfaces, errors, generics, closures, testing |
 | 3 | 15–21 | Intermediate — goroutines, channels, context, file I/O, JSON, CLI |
 | 4 | 22–28 | Production — HTTP, REST APIs, databases, logging, benchmarking, embedding |
-| Advanced | 29–35 | Deep dives — reflection, deployment, capstone, interfaces, channels, goroutines, context |
+| 5 | 29–34 | Advanced — reflection, deployment, interfaces, channels, goroutines, context |
+| — | 35 | Capstone — end-to-end project of your own choosing |
 
 ## Weekly Milestones
 
@@ -60,6 +61,10 @@ go test ./...
 **Week 3:** You can write concurrent programs, handle I/O, and build CLI tools.
 
 **Week 4:** You can serve HTTP, back it with a database, instrument it with structured logs, and benchmark it.
+
+**Week 5:** You have a deep working knowledge of Go's most nuanced subsystems — interfaces, channels, goroutines, and context.
+
+**Capstone:** You have shipped a complete, production-quality Go application.
 
 ## Reference Docs
 

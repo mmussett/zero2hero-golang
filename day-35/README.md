@@ -1,664 +1,401 @@
-# Day 35: The Go Context Model — Deep Dive
+# Day 35: Capstone
 
-Day 17 introduced `context.Context` as a practical tool. Today you go deeper: how the context tree works internally, advanced propagation patterns, values done right, context in HTTP middleware and databases, detecting leaks, and testing with context.
+## You Made It
 
----
+Thirty days of deliberate practice. You have built:
 
-## 1. What Context Actually Is
+- A concurrent file hasher, a thread-safe LRU cache, a cancellable HTTP downloader
+- A full CRUD REST API with middleware, structured logging, and a SQLite backing store
+- A CLI tool with subcommands
+- Benchmarks, profiles, and an embedded-assets server
 
-`context.Context` is an interface with four methods:
+Now build something that is entirely yours.
 
-```go
-type Context interface {
-    Deadline() (deadline time.Time, ok bool)
-    Done() <-chan struct{}
-    Err() error
-    Value(key any) any
-}
-```
+## Skills You Have
 
-- **`Done()`** — returns a channel that is closed when the context is cancelled or times out. Callers block on `<-ctx.Done()` to detect cancellation.
-- **`Err()`** — returns the reason: `context.Canceled` or `context.DeadlineExceeded`. Returns `nil` if the context is not yet done.
-- **`Deadline()`** — returns the absolute time at which the context will be cancelled, if one was set.
-- **`Value(key)`** — retrieves a value stored by a parent. Returns `nil` if not found.
+| Week | What You Can Do Now |
+|------|---------------------|
+| 1 | Model any domain with structs, slices, maps, and packages |
+| 2 | Write idiomatic interfaces, handle errors cleanly, use generics |
+| 3 | Write concurrent programs, build CLI tools, serve HTTP |
+| 4 | Build, instrument, profile, containerise, and publish a Go service |
 
-`context.Background()` and `context.TODO()` return non-cancellable root contexts that implement this interface. Every other context is built by wrapping one of them.
+## Capstone Options
 
----
+**Small (2–3 days)** — CLI tools
+- A `grep` replacement: recursive regex search with coloured, numbered output
+- A password generator/manager storing entries encrypted with `crypto/aes`
+- A Markdown renderer that outputs ANSI-formatted text to the terminal
 
-## 2. The Context Tree
+**Medium (1–2 weeks)** — Web services
+- A URL shortener: `POST /shorten` returns a short code, `GET /{code}` redirects; backed by SQLite
+- A personal finance tracker: CSV import, category tagging, monthly summaries as a REST API
+- A WebSocket chat server with named rooms using `golang.org/x/net/websocket`
 
-Contexts form a **tree**. Each `With*` call creates a child node. Cancelling a parent automatically cancels all its descendants — but a child cannot cancel its parent.
+**Large (2–4 weeks)** — Substantial projects
+- A static site generator: Markdown → HTML with templates, partials, and `--serve` live-reload
+- A bitcask-inspired key-value database: WAL, compaction, HTTP API
+- A concurrent web crawler: configurable depth, robots.txt respect, deduplicated output
 
-```
-Background()
-    └── WithCancel() → cancelCtx
-            ├── WithTimeout(5s) → timerCtx
-            │       └── WithValue("reqID", "abc") → valueCtx
-            └── WithValue("user", user) → valueCtx
-```
+## Planning Checklist
 
-When you cancel `cancelCtx`, every node below it receives the signal on its `Done()` channel simultaneously. This is the foundation of Go's cancellation model — one signal propagates down the entire call graph.
+Before writing code:
 
-```go
-parent, cancel := context.WithCancel(context.Background())
-defer cancel()  // always call cancel to release resources
-
-child, _ := context.WithTimeout(parent, 5*time.Second)
-// Cancelling parent also cancels child.
-// child's timeout is 5s OR until parent is cancelled, whichever comes first.
-```
-
-**Key rule:** always `defer cancel()` immediately after calling `WithCancel`, `WithTimeout`, or `WithDeadline`. Failing to call cancel leaks a goroutine inside the context runtime that watches for the parent to finish.
-
----
-
-## 3. The Four Factory Functions
-
-### `context.WithCancel`
-
-```go
-ctx, cancel := context.WithCancel(parent)
-defer cancel()
-```
-
-Use when you need to cancel work explicitly — e.g., the user presses Ctrl-C, a request handler returns, or a service shuts down.
-
-### `context.WithTimeout`
-
-```go
-ctx, cancel := context.WithTimeout(parent, 3*time.Second)
-defer cancel()
-```
-
-Cancels after a duration relative to `time.Now()`. The most common choice for HTTP requests and database queries.
-
-### `context.WithDeadline`
-
-```go
-deadline := time.Now().Add(3 * time.Second)
-ctx, cancel := context.WithDeadline(parent, deadline)
-defer cancel()
-```
-
-Cancels at an absolute time. Use when you receive a deadline from an external system (e.g., a gRPC deadline propagated from a caller) and want to honour it precisely.
-
-### `context.WithValue`
-
-```go
-type ctxKey string  // unexported type — avoids collisions
-const requestIDKey ctxKey = "requestID"
-
-ctx = context.WithValue(ctx, requestIDKey, "req-abc-123")
-
-// Later:
-if id, ok := ctx.Value(requestIDKey).(string); ok {
-    fmt.Println("request ID:", id)
-}
-```
-
-Attaches a value to the context. The value is available to all functions in the call chain that receive this context.
-
----
-
-## 4. Context Values — Done Right
-
-Context values are often misused. Here are the rules:
-
-### Use a private key type
-
-Never use a built-in type (`string`, `int`) as a context key — any package could accidentally use the same key and overwrite or shadow your value.
-
-```go
-// WRONG — any package can set/shadow this:
-ctx = context.WithValue(ctx, "userID", 42)
-
-// RIGHT — only this package can use this key:
-type contextKey int
-const userIDKey contextKey = iota
-ctx = context.WithValue(ctx, userIDKey, 42)
-```
-
-### What belongs in context vs function parameters
-
-| Put in context | Pass as parameter |
-|----------------|------------------|
-| Request-scoped metadata: request ID, trace ID, auth token, user identity | Business logic inputs: IDs, names, flags |
-| Cross-cutting concerns that every layer needs but no layer owns | Config values, feature flags |
-| Cancellation signal | Return values, errors |
-
-The test: if you would have to add the value as a parameter to every function in a call chain just to pass it through, context is appropriate. If the value is meaningful to the function's logic, make it a parameter.
-
-### Helper functions for type-safe access
-
-```go
-type contextKey int
-
-const (
-    requestIDKey contextKey = iota
-    userKey
-)
-
-func WithRequestID(ctx context.Context, id string) context.Context {
-    return context.WithValue(ctx, requestIDKey, id)
-}
-
-func RequestIDFromContext(ctx context.Context) (string, bool) {
-    id, ok := ctx.Value(requestIDKey).(string)
-    return id, ok
-}
-```
-
-This pattern makes the context API type-safe and keeps key management in one place.
-
----
-
-## 5. Checking for Cancellation
-
-### Polling
-
-```go
-func doWork(ctx context.Context) error {
-    for _, item := range items {
-        select {
-        case <-ctx.Done():
-            return ctx.Err()
-        default:
-        }
-        process(item)
-    }
-    return nil
-}
-```
-
-The `default` case makes the `select` non-blocking — it only checks for cancellation, then continues immediately.
-
-### Blocking on two things simultaneously
-
-```go
-select {
-case result := <-resultCh:
-    return result, nil
-case <-ctx.Done():
-    return nil, ctx.Err()
-}
-```
-
-This is the canonical pattern for a goroutine that waits for either a result or cancellation.
-
-### `context.Cause` (Go 1.21+)
-
-```go
-ctx, cancel := context.WithCancelCause(parent)
-cancel(errors.New("user logged out"))  // attach a cause
-
-// Later:
-fmt.Println(context.Cause(ctx))  // prints: user logged out
-fmt.Println(ctx.Err())           // prints: context canceled
-```
-
-`WithCancelCause` lets you attach a specific reason to the cancellation, separate from the generic `context.Canceled` sentinel.
-
----
-
-## 6. Context in HTTP Middleware
-
-Every `http.Request` carries a context. Middleware can enrich it:
-
-```go
-func RequestIDMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        id := generateID()
-        ctx := WithRequestID(r.Context(), id)
-        w.Header().Set("X-Request-ID", id)
-        next.ServeHTTP(w, r.WithContext(ctx))
-    })
-}
-
-func AuthMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        token := r.Header.Get("Authorization")
-        user, err := validateToken(token)
-        if err != nil {
-            http.Error(w, "unauthorized", http.StatusUnauthorized)
-            return
-        }
-        ctx := context.WithValue(r.Context(), userKey, user)
-        next.ServeHTTP(w, r.WithContext(ctx))
-    })
-}
-```
-
-The handler at the bottom of the chain can retrieve both values:
-
-```go
-func myHandler(w http.ResponseWriter, r *http.Request) {
-    ctx := r.Context()
-    id, _ := RequestIDFromContext(ctx)
-    user := ctx.Value(userKey).(*User)
-    // ...
-}
-```
-
-The request's context is automatically cancelled when the client disconnects. A long-running handler should check `ctx.Done()` so it can stop work and free resources immediately.
-
----
-
-## 7. Context in Database Operations
-
-All `database/sql` methods have context variants. Always use them:
-
-```go
-// Without context — cannot be cancelled:
-rows, err := db.Query("SELECT * FROM users WHERE id = ?", id)
-
-// With context — respects cancellation and timeout:
-rows, err := db.QueryContext(ctx, "SELECT * FROM users WHERE id = ?", id)
-```
-
-If the HTTP request is cancelled (client disconnects), the context is cancelled, and `QueryContext` returns immediately rather than waiting for the database to respond. This prevents goroutine pileup under load.
-
-```go
-func GetUser(ctx context.Context, db *sql.DB, id int) (*User, error) {
-    row := db.QueryRowContext(ctx, "SELECT id, name, email FROM users WHERE id = ?", id)
-    var u User
-    if err := row.Scan(&u.ID, &u.Name, &u.Email); err != nil {
-        return nil, err
-    }
-    return &u, nil
-}
-```
-
----
-
-## 8. Propagating Context Across Goroutines
-
-When you launch a goroutine to do work on behalf of a request, pass the context:
-
-```go
-func handleRequest(ctx context.Context) error {
-    g, ctx := errgroup.WithContext(ctx)  // creates a child context
-
-    g.Go(func() error {
-        return fetchUserData(ctx)   // ← same context
-    })
-    g.Go(func() error {
-        return fetchProductData(ctx)  // ← same context
-    })
-
-    return g.Wait()  // if either returns an error, ctx is cancelled
-}
-```
-
-`errgroup.WithContext` (from `golang.org/x/sync/errgroup`) creates a group and a derived context. If any goroutine returns a non-nil error, the context is cancelled and the other goroutines can stop early.
-
-**Never capture a context in a struct or global variable for use in goroutines launched later.** The context must flow through the call chain, not be stored and retrieved later:
-
-```go
-// WRONG — the stored context may be cancelled by the time the goroutine uses it:
-type Worker struct {
-    ctx context.Context
-}
-
-// RIGHT — pass context as a parameter to the method that launches the goroutine:
-func (w *Worker) Start(ctx context.Context) {
-    go w.run(ctx)
-}
-```
-
----
-
-## 9. Context Leaks — How They Happen and How to Detect Them
-
-A **context leak** is when a goroutine that is waiting on `ctx.Done()` is never unblocked because the context is never cancelled.
-
-### Common cause: forgetting to call `cancel()`
-
-```go
-// LEAK — cancel is never called if makeRequest errors before timeout is needed:
-ctx, _ := context.WithTimeout(parent, 5*time.Second)
-resp, err := makeRequest(ctx)  // if this panics, cancel is never called
-```
-
-```go
-// FIX — always defer cancel:
-ctx, cancel := context.WithTimeout(parent, 5*time.Second)
-defer cancel()
-resp, err := makeRequest(ctx)
-```
-
-### Common cause: context stored and used after its scope ends
-
-```go
-// LEAK — requestCtx is cancelled when the request handler returns,
-// but the goroutine may still be running:
-func handler(w http.ResponseWriter, r *http.Request) {
-    go func() {
-        doSlowWork(r.Context())  // r.Context() is cancelled when handler returns
-    }()
-}
-
-// FIX — use a separate context for background work:
-func handler(w http.ResponseWriter, r *http.Request) {
-    ctx := context.WithoutCancel(r.Context())  // Go 1.21+: detach from request lifetime
-    go func() {
-        doSlowWork(ctx)
-    }()
-}
-```
-
-### Detection
-
-Use `runtime.NumGoroutine()` in tests before and after a request to check for goroutine leaks. The `goleak` package (`go.uber.org/goleak`) automates this:
-
-```go
-func TestHandler(t *testing.T) {
-    defer goleak.VerifyNone(t)
-    // run your test
-}
-```
-
----
-
-## 10. Testing with Context
-
-### Use `context.Background()` for unit tests
-
-```go
-func TestGetUser(t *testing.T) {
-    user, err := GetUser(context.Background(), db, 1)
-    // ...
-}
-```
-
-### Use `context.WithTimeout` in integration tests to prevent hangs
-
-```go
-func TestIntegration(t *testing.T) {
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-    defer cancel()
-
-    result, err := callRealService(ctx)
-    // ...
-}
-```
-
-### Test cancellation behaviour explicitly
-
-```go
-func TestGetUser_Cancelled(t *testing.T) {
-    ctx, cancel := context.WithCancel(context.Background())
-    cancel()  // cancel before the call
-
-    _, err := GetUser(ctx, db, 1)
-    if !errors.Is(err, context.Canceled) {
-        t.Errorf("got %v, want context.Canceled", err)
-    }
-}
-```
-
----
+- [ ] Define your core types (`Note`, `Account`, `Page`, …)
+- [ ] Choose dependencies deliberately — prefer the standard library
+- [ ] Design your error types with custom sentinels
+- [ ] Write at least one test before any handler
+- [ ] Initialise `slog` on day one
+- [ ] Write a `Dockerfile` before shipping
 
 ## Labs
 
-### Lab 1: Visualise the Context Tree
+### Lab 1: Project Planning — Pick Your Capstone
 
-**What you'll practise:** understanding parent-child cancellation propagation
+**What you'll practise:** Thinking through scope, data model, and interface before writing a single line of code.
 
 **Task:**
-Create a three-level context tree. Cancel the root and observe that all children receive the signal simultaneously.
+Review the six capstone options above. Pick one, then sketch its data model and API or command surface on paper (or in a text file) before opening your editor.
 
 **Steps:**
-1. Create a root context with `context.WithCancel(context.Background())`
-2. Create two children from the root: one with `WithTimeout(2s)`, one with `WithCancel`
-3. Create a grandchild from the first child with `WithValue`
-4. Launch a goroutine for each context that prints its level when `ctx.Done()` fires
-5. Cancel the root after 500ms — observe all goroutines stop
+1. Re-read the Capstone Options section
+2. Choose a project (Small, Medium, or Large) that fits your available time
+3. Write down your core types — e.g. `type Bookmark struct { ID int; URL string; Tags []string }`
+4. List every API endpoint or CLI subcommand your project will expose
+5. Identify the one external dependency you expect to need (if any)
+
+```
+# Example sketch for a URL bookmark manager
+Types:   Bookmark{ID, URL, Title, Tags, CreatedAt}
+Storage: JSON file (~day-19 pattern) or SQLite (~day-23 pattern)
+CLI:     add <url> [--tag t]   list [--tag t]   delete <id>   export
+HTTP:    POST /bookmarks        GET /bookmarks   DELETE /bookmarks/{id}
+```
+
+**Expected output:**
+A clear, written sketch you can refer to throughout the following labs. No code yet.
+
+**Checkpoint:** You can describe your project's core type, its storage mechanism, and its interface in three sentences without looking at notes.
+
+---
+
+### Lab 2: Module Setup — Scaffolding Your Project
+
+**What you'll practise:** Initialising a Go module, creating the directory structure, and writing stub files that compile cleanly.
+
+**Task:**
+Create the module and directory layout for your chosen capstone. Every file should compile (stubs are fine), and `go build ./...` should succeed.
+
+**Steps:**
+1. `mkdir capstone/myproject && cd capstone/myproject`
+2. `go mod init github.com/yourname/myproject`
+3. Create stub files for each package: `main.go`, `store/store.go`, `model/model.go`
+4. Add your module to `go.work`: `go work use ./capstone/myproject`
+5. Run `go build ./...` and confirm no errors
+
+```
+myproject/
+├── go.mod
+├── main.go          ← package main, imports store and model
+├── model/
+│   └── model.go     ← core types
+└── store/
+    └── store.go     ← storage interface + implementation stub
+```
 
 ```go
-root, rootCancel := context.WithCancel(context.Background())
-child1, _ := context.WithTimeout(root, 2*time.Second)
-child2, _ := context.WithCancel(root)
-grandchild := context.WithValue(child1, myKey, "hello")
+// store/store.go
+package store
+
+import "github.com/yourname/myproject/model"
+
+type Store interface {
+    Add(item model.Bookmark) (model.Bookmark, error)
+    List() ([]model.Bookmark, error)
+    Delete(id int) error
+}
 ```
 
 **Expected output:**
 ```
-grandchild done: context canceled
-child1 done: context canceled
-child2 done: context canceled
-root done: context canceled
-```
-(all nearly simultaneously after the root cancel)
-
-**Checkpoint:** Verify that cancelling `child2` alone does NOT cancel `child1` or the root.
-
----
-
-### Lab 2: WithCancel — Stopping a Worker Pool
-
-**What you'll practise:** using cancellation to stop goroutines cleanly
-
-**Task:**
-Start 5 worker goroutines. Each reads jobs from a channel. After 3 seconds, cancel the context and verify all workers exit cleanly.
-
-**Steps:**
-1. Create a `context.WithCancel` context
-2. Create a `jobs` channel
-3. Launch 5 goroutines that `select` between `jobs` and `ctx.Done()`
-4. Send 20 jobs on a separate goroutine
-5. After 3 seconds, call `cancel()`, then use a `WaitGroup` to confirm all workers exited
-
-**Checkpoint:** `runtime.NumGoroutine()` should return to the baseline after cancel + Wait.
-
----
-
-### Lab 3: WithTimeout vs WithDeadline
-
-**What you'll practise:** choosing the right time-based context
-
-**Task:**
-Write two HTTP fetchers: one using `WithTimeout`, one using `WithDeadline`. Point both at a slow server (use `httptest` with a handler that sleeps 5 seconds). Show both return `DeadlineExceeded`.
-
-**Steps:**
-1. Start an `httptest.Server` with a handler that sleeps 5 seconds
-2. `WithTimeout(1*time.Second)` — make a GET request, catch the error
-3. `WithDeadline(time.Now().Add(1*time.Second))` — same
-4. Print `ctx.Err()` for each: both show `context.DeadlineExceeded`
-5. Then show a case where `WithDeadline` is better: you receive a deadline from a caller and want to use *at most* that much time
-
-**Checkpoint:** Run the tests — both requests must fail within ~1 second, not 5.
-
----
-
-### Lab 4: Type-Safe Context Values
-
-**What you'll practise:** the typed-key pattern for context values
-
-**Task:**
-Build a `requestcontext` package (sub-directory) that stores and retrieves: a request ID (string), a user struct, and a logger. Demonstrate that the typed keys prevent collisions from other packages.
-
-**Steps:**
-1. Create `day-35/reqctx/reqctx.go` with unexported `contextKey` type
-2. Expose `WithRequestID`, `RequestID`, `WithUser`, `User`, `WithLogger`, `Logger` functions
-3. In `main.go`, build a chain: start with `Background()`, attach all three values, retrieve them deep in a call chain
-
-```go
-type contextKey int
-const (
-    keyRequestID contextKey = iota
-    keyUser
-    keyLogger
-)
+$ go build ./...
+(no output — success)
 ```
 
-**Checkpoint:** `go vet ./...` passes. Show that a package using `context.WithValue(ctx, "requestID", ...)` does NOT interfere with your typed key.
+**Checkpoint:** `go build ./...` exits 0. The module appears in `go.work`. Directory structure matches your sketch from Lab 1.
 
 ---
 
-### Lab 5: HTTP Middleware Chain with Context
+### Lab 3: Core Data Layer — Storage with Unit Tests
 
-**What you'll practise:** enriching request context across middleware layers
-
-**Task:**
-Build a middleware stack for an HTTP server:
-1. `RequestIDMiddleware` — generates a UUID-like ID, stores in context, sets `X-Request-ID` header
-2. `LoggingMiddleware` — reads request ID from context, logs method + path + duration
-3. `AuthMiddleware` — reads `Authorization: Bearer <token>` header, validates (any non-empty token is "valid"), stores user in context
-4. A `/protected` handler that reads both request ID and user from context and returns them as JSON
-
-**Checkpoint:** `curl -H "Authorization: Bearer mytoken" localhost:8080/protected` returns `{"request_id":"...","user":"mytoken"}`.
-
----
-
-### Lab 6: Context in Database Queries
-
-**What you'll practise:** using context-aware database methods
+**What you'll practise:** Implementing the storage layer (JSON file, SQLite, or in-memory) and verifying it with unit tests before wiring any interface.
 
 **Task:**
-Using `database/sql` with an in-memory SQLite database, write a `UserStore` with:
-- `CreateUser(ctx, name string) (*User, error)` — uses `ExecContext`
-- `GetUser(ctx, id int) (*User, error)` — uses `QueryRowContext`
-- `ListUsers(ctx) ([]*User, error)` — uses `QueryContext`
-
-Then write a test that cancels the context *before* calling each method and verifies the error is `context.Canceled`.
+Implement the `Store` interface from Lab 2 with a concrete type (e.g. `JSONStore` or `MemStore`). Write at least three unit tests: add-then-list, delete-then-confirm-missing, and list-empty.
 
 **Steps:**
-1. Open an `sqlite3` in-memory DB (`:memory:`)
-2. Create the users table in `init`
-3. Implement the three methods with context params
-4. In a test, cancel before each call and assert the error
-
-**Checkpoint:** `go test ./...` passes. All cancelled calls return `context.Canceled`.
-
----
-
-### Lab 7: Propagation Across Goroutines with errgroup
-
-**What you'll practise:** structured concurrency with context propagation
-
-**Task:**
-Simulate fetching data from three "services" concurrently. Each service takes a random time (0–3s). If any takes more than 2 seconds total, cancel all and return an error.
-
-**Steps:**
-1. Create `context.WithTimeout(ctx, 2*time.Second)`
-2. Use `errgroup.WithContext` (implement manually with WaitGroup + error channel if you don't want to add x/sync)
-3. Launch 3 goroutines, each sleeping a random duration, checking `ctx.Done()` between iterations
-4. If the timeout fires, all three goroutines must exit and the error is returned to main
-
-**Checkpoint:** Running multiple times shows: sometimes all complete, sometimes the timeout fires. In both cases, no goroutines are left running after the function returns.
-
----
-
-### Lab 8: Detecting Context Leaks
-
-**What you'll practise:** identifying and fixing goroutine leaks caused by un-cancelled contexts
-
-**Task:**
-Write a deliberately leaky function, detect the leak, then fix it.
-
-**Steps:**
-1. Write `leakyFetch(url string)` that creates a `context.WithCancel` but never calls cancel, makes an HTTP request, returns
-2. Call it 10 times in a test
-3. Use `runtime.NumGoroutine()` before and after — observe the count grows
-4. Fix it by adding `defer cancel()` immediately after `WithCancel`
-5. Re-run: goroutine count returns to baseline
+1. Implement `Add`, `List`, and `Delete` on your concrete store type
+2. Write `store/store_test.go` with `TestAdd`, `TestDelete`, `TestListEmpty`
+3. Run `go test ./store/...` — all tests must pass
+4. Use table-driven tests for `Delete` (existing ID, non-existing ID)
 
 ```go
-before := runtime.NumGoroutine()
-for i := 0; i < 10; i++ {
-    leakyFetch("http://example.com")
+// store/store_test.go
+func TestAdd(t *testing.T) {
+    s := NewMemStore()
+    got, err := s.Add(model.Bookmark{URL: "https://go.dev"})
+    if err != nil { t.Fatal(err) }
+    if got.ID == 0 { t.Error("expected non-zero ID") }
 }
-after := runtime.NumGoroutine()
-t.Logf("goroutines: before=%d after=%d", before, after)
-```
 
-**Checkpoint:** After the fix, `after - before <= 1` (within normal fluctuation).
-
----
-
-### Lab 9: `context.WithoutCancel` and Background Work
-
-**What you'll practise:** detaching background work from request lifetime (Go 1.21+)
-
-**Task:**
-A handler receives a request, starts a background audit job that must complete even after the request returns, then responds immediately.
-
-**Steps:**
-1. Build an HTTP handler that:
-   - Receives a POST with a body
-   - Starts a goroutine to "audit" the request (sleeps 2s, logs the body)
-   - Responds `202 Accepted` immediately
-2. First version: use `r.Context()` in the goroutine — show the goroutine is cancelled when the handler returns
-3. Fixed version: use `context.WithoutCancel(r.Context())` — the goroutine runs to completion
-
-**Checkpoint:** The audit log line appears 2 seconds after the handler responds, not before.
-
----
-
-### Final Lab: Request-Scoped Pipeline
-
-**What you'll practise:** everything from today applied to a realistic HTTP service
-
-**Task:**
-Build a small HTTP service that processes "reports" through a multi-stage pipeline. Each stage uses context for cancellation and carries request metadata via context values.
-
-Endpoints:
-- `POST /reports` — accepts `{"data": "..."}`, runs it through a 3-stage pipeline (validate → enrich → store), returns the result or an error
-- `GET /health` — returns 200 immediately
-
-Pipeline:
-- Each stage receives and passes the context
-- If the client disconnects mid-pipeline, all stages stop within 100ms
-- The request ID flows through all stages via context
-- If processing takes more than 5 seconds, timeout and return 504
-
-```go
-type Stage func(ctx context.Context, input string) (string, error)
-
-func runPipeline(ctx context.Context, stages []Stage, input string) (string, error) {
-    result := input
-    for _, stage := range stages {
-        var err error
-        result, err = stage(ctx, result)
-        if err != nil {
-            return "", err
-        }
+func TestDeleteMissing(t *testing.T) {
+    s := NewMemStore()
+    err := s.Delete(999)
+    if !errors.Is(err, ErrNotFound) {
+        t.Errorf("want ErrNotFound, got %v", err)
     }
-    return result, nil
 }
 ```
 
-**Checkpoint:** Use `curl -X POST localhost:8080/reports -d '{"data":"hello"}'` — verify the request ID appears in every log line. Kill the curl mid-request — verify the server logs `context canceled` and stops processing.
+**Expected output:**
+```
+$ go test -v ./store/...
+--- PASS: TestAdd (0.00s)
+--- PASS: TestDeleteMissing (0.00s)
+--- PASS: TestListEmpty (0.00s)
+PASS
+```
+
+**Checkpoint:** All tests pass. The storage layer has no dependency on HTTP or CLI code.
 
 ---
 
-## Day Project Goal
+### Lab 4: Business Logic — TDD Core Operations
 
-Build the request-scoped pipeline from the Final Lab above. Your implementation must:
+**What you'll practise:** Writing tests before implementation (TDD) for the core business rules of your capstone.
 
-1. Use context propagation through all HTTP middleware and pipeline stages
-2. Demonstrate all four `With*` functions being used appropriately
-3. Store request ID and user identity via typed context keys
-4. Use `WithTimeout` to enforce a 5-second processing deadline
-5. Check `ctx.Done()` between pipeline stages so cancellation is fast
-6. Log the context's request ID in every log line using `log/slog`
-7. Include a test that cancels the context mid-pipeline and verifies the error
+**Task:**
+Identify two or three business rules in your project (e.g. "duplicate URLs are rejected", "tags are normalised to lowercase", "pagination returns at most 20 items"). Write the test first, watch it fail, then implement.
 
-Run with: `go run .`
+**Steps:**
+1. Pick two business rules specific to your chosen capstone
+2. Write a failing test for each rule in `model/` or `store/`
+3. Implement just enough code to make each test pass
+4. Refactor if needed, keeping tests green
+
+```go
+// Example: duplicate URL rejection
+func TestAddDuplicateURL(t *testing.T) {
+    s := NewMemStore()
+    _, err := s.Add(model.Bookmark{URL: "https://go.dev"})
+    if err != nil { t.Fatal(err) }
+
+    _, err = s.Add(model.Bookmark{URL: "https://go.dev"})
+    if !errors.Is(err, ErrDuplicate) {
+        t.Errorf("expected ErrDuplicate, got %v", err)
+    }
+}
+```
+
+**Expected output:**
+```
+$ go test ./...
+--- FAIL: TestAddDuplicateURL (0.00s)    ← before implementation
+    store_test.go:22: expected ErrDuplicate, got <nil>
+```
+Then after implementing:
+```
+--- PASS: TestAddDuplicateURL (0.00s)
+```
+
+**Checkpoint:** You wrote the test before the implementation and watched it go from red to green. All existing tests still pass.
 
 ---
+
+### Lab 5: Interface Layer — CLI Commands or HTTP Routes
+
+**What you'll practise:** Wiring the storage layer to a CLI (`cobra` or `flag`) or HTTP routes (`net/http` or `chi`), keeping handlers thin.
+
+**Task:**
+Implement the interface layer for your capstone. Handlers and commands should contain no business logic — they parse input, call the store, and format output.
+
+**Steps:**
+1. For CLI: add subcommands (e.g. `add`, `list`, `delete`) using `flag` subcommands or `cobra`
+2. For HTTP: register routes, parse JSON request bodies, return JSON responses with correct status codes
+3. Keep each handler/command under 20 lines — push logic to the store
+4. Run `go run . add https://go.dev --tag golang` (CLI) or `curl -X POST /bookmarks` (HTTP) to smoke-test
+
+```go
+// Thin HTTP handler example
+func (h *Handler) handleAdd(w http.ResponseWriter, r *http.Request) {
+    var b model.Bookmark
+    if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+    created, err := h.store.Add(b)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusConflict)
+        return
+    }
+    w.WriteHeader(http.StatusCreated)
+    json.NewEncoder(w).Encode(created)
+}
+```
+
+**Expected output:**
+```
+$ go run . add https://go.dev --tag golang
+Added bookmark #1: https://go.dev [golang]
+
+$ go run . list
+#1  https://go.dev  [golang]
+```
+
+**Checkpoint:** At least two commands or routes work end-to-end. No business logic lives in the handler or command functions.
+
+---
+
+### Lab 6: Error Handling and Logging — Production Hygiene
+
+**What you'll practise:** Applying Day 24 sentinel error patterns and Day 25 structured logging throughout the project.
+
+**Task:**
+Add custom sentinel errors, wrap errors with context at every layer boundary, and add `slog` logging so every important operation emits a structured log entry.
+
+**Steps:**
+1. Define sentinel errors in `store/`: `var ErrNotFound = errors.New("not found")`, `var ErrDuplicate = errors.New("duplicate")`
+2. Wrap errors at the store boundary: `fmt.Errorf("store.Add: %w", ErrDuplicate)`
+3. Initialise a JSON `slog.Logger` in `main` with the service name as a permanent field
+4. Log every add, delete, and list operation at `Info`; log errors at `Error` with the `"err"` attribute
+5. Make log level configurable via `LOG_LEVEL` env var
+
+```go
+// In main
+logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: logLevelFromEnv(),
+})).With("service", "bookmarks")
+slog.SetDefault(logger)
+
+// In handler
+if errors.Is(err, store.ErrNotFound) {
+    slog.Error("bookmark not found", "id", id)
+    http.Error(w, "not found", http.StatusNotFound)
+    return
+}
+```
+
+**Expected output:**
+```
+{"time":"...","level":"INFO","msg":"bookmark added","service":"bookmarks","id":1,"url":"https://go.dev"}
+{"time":"...","level":"ERROR","msg":"bookmark not found","service":"bookmarks","id":999}
+```
+
+**Checkpoint:** Every error path logs at `Error` level with an `"err"` attribute. Happy paths log at `Info`. `errors.Is` correctly identifies sentinel errors across layer boundaries.
+
+---
+
+### Lab 7: Polish and Ship — Dockerfile, Graceful Shutdown, --version
+
+**What you'll practise:** Making your capstone production-ready with a multi-stage Dockerfile, graceful HTTP shutdown, and embedded version info.
+
+**Task:**
+Add the final production touches: a multi-stage Dockerfile, graceful shutdown on `SIGTERM`/`SIGINT`, and a `--version` flag with embedded build info.
+
+**Steps:**
+1. Add `var version = "dev"` and a `--version` flag (see Day 29 Lab 1)
+2. Implement graceful shutdown using `http.Server.Shutdown` with a context timeout
+3. Write a multi-stage `Dockerfile` (alpine builder, scratch or alpine runtime)
+4. Write a `README.md` with installation, usage examples, and environment variables
+
+```go
+// Graceful shutdown
+srv := &http.Server{Addr: addr, Handler: mux}
+go func() {
+    if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+        slog.Error("server error", "err", err)
+        os.Exit(1)
+    }
+}()
+
+quit := make(chan os.Signal, 1)
+signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+<-quit
+
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+if err := srv.Shutdown(ctx); err != nil {
+    slog.Error("shutdown error", "err", err)
+}
+slog.Info("server stopped gracefully")
+```
+
+**Expected output:**
+```
+$ ./myapp --version
+bookmarks v1.0.0 (built 2024-01-15T10:00:00Z)
+
+$ docker build -t bookmarks . && docker run -p 8080:8080 bookmarks
+{"time":"...","level":"INFO","msg":"server started","addr":":8080","version":"v1.0.0"}
+```
+
+**Checkpoint:** `docker run` starts the server. `curl /health` returns version info. Sending `Ctrl-C` triggers a clean shutdown log line within 10 seconds.
+
+---
+
+### Final Lab (Project): Your Capstone — URL Bookmark Manager (Example)
+
+**What you'll practise:** Synthesising all 30 days into a complete, tested, containerised Go application.
+
+**Task:**
+Complete your chosen capstone project, using the URL bookmark manager as the reference example. The finished project must have: working storage, a tested business layer, an HTTP or CLI interface, structured logging, and a Dockerfile.
+
+**Steps:**
+1. Review your Lab 1 sketch — does the implementation match?
+2. Ensure `go test ./...` passes with no failures
+3. Write at least one integration test that exercises the full stack (handler → store)
+4. Run `docker build` and smoke-test every endpoint or command from the `README.md`
+5. Tag `v1.0.0` locally: `git tag v1.0.0`
+
+```bash
+# Smoke-test sequence for the bookmark manager example
+curl -s -X POST http://localhost:8080/bookmarks \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://go.dev","tags":["golang"]}'
+
+curl -s http://localhost:8080/bookmarks | jq .
+
+curl -s -X DELETE http://localhost:8080/bookmarks/1
+
+curl -s http://localhost:8080/health
+```
+
+**Expected output:**
+```
+{"id":1,"url":"https://go.dev","tags":["golang"],"created_at":"2024-01-15T10:00:00Z"}
+[{"id":1,"url":"https://go.dev","tags":["golang"],"created_at":"..."}]
+(empty — 204 No Content)
+{"status":"ok","version":"v1.0.0","build_time":"2024-01-15T10:00:00Z"}
+```
+
+**Checkpoint:** All four smoke-test commands succeed. `go test ./...` is green. `docker build` succeeds and the image is under 20 MB.
+
+**Extension ideas:** add a WebSocket "new bookmark" live feed; implement CSV export; write a GitHub Actions workflow that runs tests and builds the Docker image on every push.
+
+## Closing Thought
+
+Go's difficulty is front-loaded: the module system, explicit error handling, and concurrency model feel unfamiliar at first. But these constraints prevent entire categories of bugs. Your Go code is honest about what can fail, who owns the data, and where the concurrency lives.
+
+That honesty is the point.
 
 ## Official Documentation
 
-- [`context`](https://pkg.go.dev/context) — the full package: Background, TODO, WithCancel, WithTimeout, WithDeadline, WithValue, WithCancelCause, WithoutCancel
-- [`context.WithCancelCause`](https://pkg.go.dev/context#WithCancelCause) — Go 1.20+: attach a specific cancellation reason
-- [`context.WithoutCancel`](https://pkg.go.dev/context#WithoutCancel) — Go 1.21+: detach from parent cancellation
-- [`context.Cause`](https://pkg.go.dev/context#Cause) — Go 1.21+: retrieve the cancellation cause
-- [Go Blog: Contexts and structs](https://go.dev/blog/context-and-structs) — why context belongs in function signatures, not struct fields
-- [Go Blog: Context](https://go.dev/blog/context) — the original context blog post (2014), still essential reading
-- [Language Spec — Channel types](https://go.dev/ref/spec#Channel_types) — the `<-chan struct{}` pattern used by `Done()`
-- [`database/sql`](https://pkg.go.dev/database/sql) — QueryContext, ExecContext, BeginTx and other context-aware methods
-- [`net/http.Request.WithContext`](https://pkg.go.dev/net/http#Request.WithContext) — attaching a context to an HTTP request
-- [`golang.org/x/sync/errgroup`](https://pkg.go.dev/golang.org/x/sync/errgroup) — structured concurrency with context propagation
-- [Go Memory Model](https://go.dev/ref/mem) — happens-before guarantees relevant to channel-based cancellation
+- [`crypto/aes`](https://pkg.go.dev/crypto/aes) — AES encryption for the password manager capstone option
+- [`net/http`](https://pkg.go.dev/net/http) — HTTP server and client for web service capstones
+- [`database/sql`](https://pkg.go.dev/database/sql) — SQL database layer for URL shortener and finance tracker
+- [`log/slog`](https://pkg.go.dev/log/slog) — structured logging recommended from day one of any capstone
+- [`text/template`](https://pkg.go.dev/text/template) — template rendering for static site generator capstone
+- [`encoding/json`](https://pkg.go.dev/encoding/json) — JSON serialisation used across all web service capstones
+- [Effective Go](https://go.dev/doc/effective_go) — canonical guide to idiomatic Go
+- [Go Tour](https://go.dev/tour/) — interactive refresher on any concept
+- [Go standard library](https://pkg.go.dev/std) — full index of all standard packages

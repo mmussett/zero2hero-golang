@@ -68,23 +68,30 @@ A project-based path from absolute beginner to production-minded Go developer, p
 
 ---
 
-## Advanced Golang Concepts (Days 29–35)
+## Week 5: Advanced Golang Concepts (Days 29–34)
 
 | Day | Topic | Project |
 |-----|-------|---------|
 | [29](day-29/README.md) | `reflect` — `TypeOf`, `ValueOf`, struct tags, `reflect.Kind` | Custom `Describe` utility |
 | [30](day-30/README.md) | Versioning, `pkg.go.dev`, Docker multi-stage build, `goreleaser` | Package and ship the shape library |
-| [31](day-31/README.md) | Capstone | End-to-end CLI + REST API + database app |
-| [32](day-32/README.md) | Interfaces: composition, nil trap, stdlib catalogue, accept-interfaces/return-structs, mocking, anti-patterns | Pluggable notification system |
-| [33](day-33/README.md) | Channel model: pipelines, fan-out/in, done channels, `select`, direction types, common mistakes | Channel-based text pipeline + word counter |
-| [34](day-34/README.md) | Goroutines & sync: `Mutex`, `RWMutex`, `WaitGroup`, `Once`, `atomic`, `sync.Map`, `errgroup`, deadlocks | Concurrent download manager |
-| [35](day-35/README.md) | Context deep dive: tree propagation, values, middleware, DB ops, leak detection, testing patterns | Request-scoped pipeline |
+| [31](day-31/README.md) | Interfaces: composition, nil trap, stdlib catalogue, accept-interfaces/return-structs, mocking, anti-patterns | Pluggable notification system |
+| [32](day-32/README.md) | Channel model: pipelines, fan-out/in, done channels, `select`, direction types, common mistakes | Channel-based text pipeline + word counter |
+| [33](day-33/README.md) | Goroutines & sync: `Mutex`, `RWMutex`, `WaitGroup`, `Once`, `atomic`, `sync.Map`, `errgroup`, deadlocks | Concurrent download manager |
+| [34](day-34/README.md) | Context deep dive: tree propagation, values, middleware, DB ops, leak detection, testing patterns | Request-scoped pipeline |
+
+**Milestone:** You have a deep working knowledge of Go's most nuanced subsystems — interfaces, channels, goroutines, and context.
 
 ---
 
-## Capstone Options
+## Capstone Project (Day 35)
 
-Choose a scope that fits your time and ambition.
+| Day | Topic | Project |
+|-----|-------|---------|
+| [35](day-35/README.md) | Capstone | End-to-end CLI + REST API + database app |
+
+Apply everything you have learned across the five weeks to build a complete, production-quality Go application of your own choosing.
+
+**Capstone options — choose a scope that fits your time and ambition:**
 
 **Small (2–3 days)**
 - A `grep` replacement: recursive regex search with coloured output

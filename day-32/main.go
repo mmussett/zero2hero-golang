@@ -1,222 +1,213 @@
+// Day 33 – Channel Pipeline: Word Frequency Counter
+//
+// Architecture:
+//
+//	generator ──► fanOut ──► [worker 0..N-1] ──► merge/reduce ──► results
+//
+// Each stage communicates exclusively via channels. A done channel carries
+// cancellation throughout the pipeline.
 package main
 
 import (
-	"errors"
 	"fmt"
+	"sort"
 	"strings"
-	"time"
+	"sync"
+	"unicode"
 )
 
-// ── Core interface ────────────────────────────────────────────────────────────
+// ── Source text ───────────────────────────────────────────────────────────────
 
-// Notifier is the primary interface for sending notifications.
-type Notifier interface {
-	Notify(to, subject, message string) error
-}
+const paragraph = `The quick brown fox jumps over the lazy dog. ` +
+	`Go is an open source programming language that makes it easy to build ` +
+	`simple reliable and efficient software. Goroutines and channels make ` +
+	`concurrent programming natural and fun. The channel is the pipe that ` +
+	`connects goroutines letting them communicate by sending and receiving values. ` +
+	`A select statement lets a goroutine wait on multiple communication operations. `
 
-// Compile-time interface satisfaction checks (nil pointer trick)
-var _ Notifier = (*EmailNotifier)(nil)
-var _ Notifier = (*SMSNotifier)(nil)
-var _ Notifier = (*SlackNotifier)(nil)
-var _ Notifier = (*MultiNotifier)(nil)
-var _ Notifier = (*RetryNotifier)(nil)
-var _ Notifier = (*FilterNotifier)(nil)
+// ── Stage 1: generator ───────────────────────────────────────────────────────
 
-// ── Concrete implementations ──────────────────────────────────────────────────
-
-// EmailNotifier sends notifications via (mock) email.
-type EmailNotifier struct {
-	From string
-}
-
-func (e *EmailNotifier) Notify(to, subject, message string) error {
-	fmt.Printf("[EMAIL] From:%s To:%s Subject:%q Body:%q\n",
-		e.From, to, subject, message)
-	return nil
-}
-
-// SMSNotifier sends notifications via (mock) SMS.
-type SMSNotifier struct {
-	Provider string
-}
-
-func (s *SMSNotifier) Notify(to, subject, message string) error {
-	// SMS ignores subject
-	fmt.Printf("[SMS/%s] To:%s Text:%q\n", s.Provider, to, message)
-	return nil
-}
-
-// SlackNotifier posts notifications to a (mock) Slack channel.
-type SlackNotifier struct {
-	Webhook string
-}
-
-func (sl *SlackNotifier) Notify(to, subject, message string) error {
-	fmt.Printf("[SLACK] Channel:%s Subject:%q Message:%q (webhook=%s)\n",
-		to, subject, message, sl.Webhook)
-	return nil
-}
-
-// ── Composed / decorator implementations ─────────────────────────────────────
-
-// MultiNotifier fans out a single Notify call to multiple Notifiers.
-// All notifiers are called; any errors are collected and returned together.
-type MultiNotifier struct {
-	Notifiers []Notifier
-}
-
-func (m *MultiNotifier) Notify(to, subject, message string) error {
-	var errs []string
-	for _, n := range m.Notifiers {
-		if err := n.Notify(to, subject, message); err != nil {
-			errs = append(errs, err.Error())
+// generator emits every word from text into the returned channel, then closes
+// it. It respects the done channel for early cancellation.
+func generator(done <-chan struct{}, text string) <-chan string {
+	out := make(chan string, 256)
+	go func() {
+		defer close(out)
+		// Split on whitespace / punctuation
+		words := strings.FieldsFunc(text, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		})
+		for _, w := range words {
+			w = strings.ToLower(w)
+			if w == "" {
+				continue
+			}
+			select {
+			case out <- w:
+			case <-done:
+				return
+			}
 		}
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("multi-notifier errors: %s", strings.Join(errs, "; "))
-	}
-	return nil
+	}()
+	return out
 }
 
-// RetryNotifier wraps a Notifier and retries up to MaxRetries times on failure,
-// with exponential back-off starting at InitialDelay.
-type RetryNotifier struct {
-	Inner        Notifier
-	MaxRetries   int
-	InitialDelay time.Duration
-}
+// ── Stage 2: fanOut ───────────────────────────────────────────────────────────
 
-func (r *RetryNotifier) Notify(to, subject, message string) error {
-	delay := r.InitialDelay
-	var lastErr error
-	for attempt := 0; attempt <= r.MaxRetries; attempt++ {
-		if attempt > 0 {
-			fmt.Printf("[RETRY] attempt %d after %v delay\n", attempt, delay)
-			time.Sleep(delay)
-			delay *= 2
+// fanOut distributes words from in across n worker channels using round-robin.
+func fanOut(done <-chan struct{}, in <-chan string, n int) []<-chan string {
+	channels := make([]chan string, n)
+	for i := range channels {
+		channels[i] = make(chan string, 256)
+	}
+
+	go func() {
+		defer func() {
+			for _, ch := range channels {
+				close(ch)
+			}
+		}()
+		i := 0
+		for word := range in {
+			select {
+			case channels[i%n] <- word:
+				i++
+			case <-done:
+				return
+			}
 		}
-		if err := r.Inner.Notify(to, subject, message); err != nil {
-			lastErr = err
-			fmt.Printf("[RETRY] attempt %d failed: %v\n", attempt, err)
-			continue
+	}()
+
+	// Convert []chan string to []<-chan string
+	out := make([]<-chan string, n)
+	for i, ch := range channels {
+		out[i] = ch
+	}
+	return out
+}
+
+// ── Stage 3: count ───────────────────────────────────────────────────────────
+
+// count reads words from in, tallies them, then sends the partial map on the
+// returned channel. One goroutine per worker channel.
+func count(done <-chan struct{}, in <-chan string) <-chan map[string]int {
+	out := make(chan map[string]int, 1)
+	go func() {
+		defer close(out)
+		freq := make(map[string]int)
+		for {
+			select {
+			case word, ok := <-in:
+				if !ok {
+					out <- freq
+					return
+				}
+				freq[word]++
+			case <-done:
+				out <- freq
+				return
+			}
 		}
-		return nil // success
-	}
-	return fmt.Errorf("all %d retries exhausted, last error: %w", r.MaxRetries, lastErr)
+	}()
+	return out
 }
 
-// FilterNotifier wraps a Notifier and applies a predicate before forwarding.
-// If the predicate returns false, the message is silently dropped.
-type FilterNotifier struct {
-	Inner  Notifier
-	Filter func(to, subject, message string) bool
-}
+// ── Stage 4: merge / reduce ───────────────────────────────────────────────────
 
-func (f *FilterNotifier) Notify(to, subject, message string) error {
-	if !f.Filter(to, subject, message) {
-		fmt.Printf("[FILTER] Dropped message to %s (subject=%q)\n", to, subject)
-		return nil
-	}
-	return f.Inner.Notify(to, subject, message)
-}
+// merge collects all partial frequency maps from each worker and reduces them
+// into a single combined map.
+func merge(partials []<-chan map[string]int) map[string]int {
+	var wg sync.WaitGroup
+	combined := make(map[string]int)
+	var mu sync.Mutex
 
-// ── Nil interface trap demo ───────────────────────────────────────────────────
-
-// failingNotifier is a Notifier whose Notify always returns an error.
-// Used to demonstrate the typed nil trap.
-type failingNotifier struct{}
-
-func (fn *failingNotifier) Notify(to, subject, message string) error {
-	return errors.New("failingNotifier always fails")
-}
-
-func demonstrateNilTrap() {
-	fmt.Println()
-	fmt.Println("=== Nil Interface Trap Demo ===")
-
-	// A typed nil: the interface holds a non-nil type descriptor pointing to a nil value.
-	var typed *failingNotifier = nil
-	var iface Notifier = typed
-
-	fmt.Printf("typed == nil : %v  (Go compares pointer to nil)\n", typed == nil)
-	fmt.Printf("iface == nil : %v  (interface has a non-nil type, so it is NOT nil)\n", iface == nil)
-
-	// Safe check
-	if iface != nil {
-		fmt.Println("  iface != nil — the interface is non-nil even though the underlying pointer is nil")
-		// Calling Notify on a nil *failingNotifier would panic if Notify
-		// dereferenced the receiver — guard if needed.
+	for _, ch := range partials {
+		wg.Add(1)
+		go func(c <-chan map[string]int) {
+			defer wg.Done()
+			for partial := range c {
+				mu.Lock()
+				for word, cnt := range partial {
+					combined[word] += cnt
+				}
+				mu.Unlock()
+			}
+		}(ch)
 	}
 
-	// Correct way: keep iface as a pure nil interface
-	var safeIface Notifier // not assigned — truly nil
-	fmt.Printf("safeIface == nil : %v\n", safeIface == nil)
+	wg.Wait()
+	return combined
 }
 
-// ── main ──────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+type wordCount struct {
+	Word  string
+	Count int
+}
+
+// topN returns the n most frequent words, sorted descending by count.
+func topN(freq map[string]int, n int) []wordCount {
+	all := make([]wordCount, 0, len(freq))
+	for w, c := range freq {
+		all = append(all, wordCount{w, c})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Count != all[j].Count {
+			return all[i].Count > all[j].Count
+		}
+		return all[i].Word < all[j].Word
+	})
+	if n > len(all) {
+		n = len(all)
+	}
+	return all[:n]
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
-	fmt.Println("=== Day 31: Go Interfaces Deep Dive ===")
-	fmt.Println()
+	const (
+		repetitions = 5000
+		numWorkers  = 4
+		topWords    = 20
+	)
 
-	// Basic notifiers
-	email := &EmailNotifier{From: "noreply@example.com"}
-	sms := &SMSNotifier{Provider: "Twilio"}
-	slack := &SlackNotifier{Webhook: "https://hooks.slack.com/xxx"}
-
-	fmt.Println("--- Single notifiers ---")
-	_ = email.Notify("alice@example.com", "Welcome", "Thanks for signing up!")
-	_ = sms.Notify("+15555550100", "", "Your OTP is 123456")
-	_ = slack.Notify("#alerts", "Deployment", "v1.2.3 deployed to prod")
-
-	// MultiNotifier
-	fmt.Println()
-	fmt.Println("--- MultiNotifier (fan-out) ---")
-	multi := &MultiNotifier{
-		Notifiers: []Notifier{email, sms, slack},
+	// Build a large text corpus
+	var sb strings.Builder
+	for i := 0; i < repetitions; i++ {
+		sb.WriteString(paragraph)
 	}
-	if err := multi.Notify("bob@example.com", "Alert", "Disk usage > 90%"); err != nil {
-		fmt.Println("MultiNotifier error:", err)
-	}
+	text := sb.String()
 
-	// RetryNotifier wrapping a failing notifier
-	fmt.Println()
-	fmt.Println("--- RetryNotifier (wraps a failing notifier, 3 retries) ---")
-	failing := &failingNotifier{}
-	retry := &RetryNotifier{
-		Inner:        failing,
-		MaxRetries:   3,
-		InitialDelay: 10 * time.Millisecond,
-	}
-	if err := retry.Notify("carol@example.com", "Test", "Will retry 3 times"); err != nil {
-		fmt.Println("RetryNotifier final error:", err)
+	fmt.Printf("Pipeline: %d workers, corpus ~%d characters\n\n",
+		numWorkers, len(text))
+
+	// Cancellation channel (close to cancel the whole pipeline)
+	done := make(chan struct{})
+	defer close(done)
+
+	// Stage 1: generate words
+	words := generator(done, text)
+
+	// Stage 2: fan out to N workers
+	workerChans := fanOut(done, words, numWorkers)
+
+	// Stage 3: count in each worker
+	partials := make([]<-chan map[string]int, numWorkers)
+	for i, ch := range workerChans {
+		partials[i] = count(done, ch)
 	}
 
-	// RetryNotifier wrapping a working notifier
-	fmt.Println()
-	fmt.Println("--- RetryNotifier (wraps a working notifier, succeeds first try) ---")
-	retryOK := &RetryNotifier{
-		Inner:        email,
-		MaxRetries:   3,
-		InitialDelay: 10 * time.Millisecond,
+	// Stage 4: merge / reduce
+	freq := merge(partials)
+
+	// Report
+	fmt.Printf("Unique words: %d\n", len(freq))
+	fmt.Printf("Top %d words:\n\n", topWords)
+	fmt.Printf("%-20s %s\n", "WORD", "COUNT")
+	fmt.Printf("%-20s %s\n", "--------------------", "-----")
+	for _, wc := range topN(freq, topWords) {
+		fmt.Printf("%-20s %d\n", wc.Word, wc.Count)
 	}
-	_ = retryOK.Notify("dave@example.com", "Good News", "Success!")
-
-	// FilterNotifier
-	fmt.Println()
-	fmt.Println("--- FilterNotifier (only forward URGENT messages) ---")
-	filtered := &FilterNotifier{
-		Inner: slack,
-		Filter: func(to, subject, message string) bool {
-			return strings.Contains(strings.ToUpper(subject), "URGENT")
-		},
-	}
-	_ = filtered.Notify("#oncall", "URGENT: DB down", "Primary DB is unreachable!")
-	_ = filtered.Notify("#general", "Weekly report", "Everything is fine.")
-
-	// Nil interface trap
-	demonstrateNilTrap()
-
-	fmt.Println()
-	fmt.Println("=== Done ===")
 }

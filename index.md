@@ -14,7 +14,8 @@ A self-paced, project-based 35-day curriculum moving from absolute beginner to p
 | [Week 2 — Core Language](#week-2--core-language) | 8–14 | Project structure, interfaces, errors, generics, closures, testing |
 | [Week 3 — Intermediate](#week-3--intermediate) | 15–21 | Standard library, goroutines, channels, context, file I/O, JSON, CLI |
 | [Week 4 — Production](#week-4--production) | 22–28 | HTTP, REST APIs, databases, logging, benchmarking, embedding |
-| [Advanced Golang Concepts](#advanced-golang-concepts) | 29–35 | Reflection, deployment, capstone, deep dives |
+| [Week 5 — Advanced Golang Concepts](#week-5--advanced-golang-concepts) | 29–34 | Reflection, deployment, interfaces, channels, goroutines, context |
+| [Capstone Project](#capstone-project) | 35 | End-to-end production Go application |
 
 → [Full curriculum overview](/zero2hero-golang/CURRICULUM/)
 
@@ -60,25 +61,26 @@ A self-paced, project-based 35-day curriculum moving from absolute beginner to p
 - [Day 27: Benchmarking and Profiling](/zero2hero-golang/day-27/)
 - [Day 28: Embedding, Build Tags & go generate](/zero2hero-golang/day-28/)
 
----
-
-## Advanced Golang Concepts
-
-Seven days covering reflection, deployment, the capstone project, and deep dives into the topics that matter most.
+## Week 5 — Advanced Golang Concepts
 
 - [Day 29: Reflection](/zero2hero-golang/day-29/)
 - [Day 30: Publishing and Deployment](/zero2hero-golang/day-30/)
-- [Day 31: Capstone Project](/zero2hero-golang/day-31/)
-- [Day 32: Go Interfaces — The Complete Picture](/zero2hero-golang/day-32/)
-- [Day 33: The Go Channel Model](/zero2hero-golang/day-33/)
-- [Day 34: Goroutines, Concurrency & Synchronisation](/zero2hero-golang/day-34/)
-- [Day 35: The Go Context Model — Deep Dive](/zero2hero-golang/day-35/)
+- [Day 31: Go Interfaces — The Complete Picture](/zero2hero-golang/day-31/)
+- [Day 32: The Go Channel Model](/zero2hero-golang/day-32/)
+- [Day 33: Goroutines, Concurrency & Synchronisation](/zero2hero-golang/day-33/)
+- [Day 34: The Go Context Model — Deep Dive](/zero2hero-golang/day-34/)
+
+## Capstone Project
+
+- [Day 35: Capstone Project](/zero2hero-golang/day-35/)
+
+Apply everything across five weeks to build a complete, production-quality Go application of your own choosing.
 
 ---
 
-## Capstone Projects
+## Capstone Skeletons
 
-Skeleton projects for every Day 31 capstone idea — ready for you to build out.
+Ready-to-build starter projects for every capstone idea.
 
 **Small CLI tools (2–3 days)**
 - [grep — recursive regex search replacement](/zero2hero-golang/capstone/grep/)
