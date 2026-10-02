@@ -5,7 +5,7 @@
 Go's concurrency is built on three pillars:
 
 1. **Goroutines** — lightweight, cooperatively-scheduled units of execution
-2. **Channels** — typed pipes for safe communication (covered in Day 33)
+2. **Channels** — typed pipes for safe communication (covered in Day 32)
 3. **sync** — low-level primitives for shared-memory synchronisation
 
 When goroutines share data via channels, no explicit locking is needed. When goroutines share data via memory, locking is required.

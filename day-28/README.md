@@ -115,7 +115,7 @@ func main() {
 | |_| | (_) |/ __/ | |_| |
  \____|\___/|_____| \___/
 
-Day 27: Embedding, Templates & Build Tags
+Day 28: Embedding, Templates & Build Tags
 ```
 
 **Checkpoint:** Run `go build -o lab1 . && ./lab1`. The banner prints even when you delete `assets/banner.txt` after building.
@@ -170,8 +170,8 @@ func main() {
 ```
 banner.txt            96 bytes  "  ____       ____    ___\n / ___| ..."
 index.html           427 bytes  "<!DOCTYPE html>\n<html lang=\"en\">\n..."
-script.js             58 bytes  "// Day 27: demo script\ndocument.ad..."
-style.css            512 bytes  "/* Day 27 stylesheet */\n\n*, *::be..."
+script.js             58 bytes  "// Day 28: demo script\ndocument.ad..."
+style.css            512 bytes  "/* Day 28 stylesheet */\n\n*, *::be..."
 ```
 
 **Checkpoint:** Run `go run .`. All four files appear. Delete any asset file — `go run .` still works because the files are embedded.
@@ -217,7 +217,7 @@ log.Fatal(http.ListenAndServe(":8080", mux))
 **Expected output:**
 ```
 $ curl -s http://localhost:8080/assets/style.css | head -3
-/* Day 27 stylesheet */
+/* Day 28 stylesheet */
 
 *, *::before, *::after {
 ```

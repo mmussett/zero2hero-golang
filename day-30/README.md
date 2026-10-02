@@ -319,9 +319,9 @@ changelog:
 Package the Day 22 notes API with a production-ready Dockerfile, add a `/health` endpoint that returns embedded version info, and produce a multi-platform release with goreleaser.
 
 **Steps:**
-1. Extract the Day 08 shape library into `day-29/shapes/` with proper exported types and package docs
+1. Extract the Day 09 shape library into `day-29/shapes/` with proper exported types and package docs
 2. Write a `Dockerfile` for the Day 22 notes API using a multi-stage build
-3. Write a `.goreleaser.yaml` for the Day 20 `todo` CLI targeting Linux, macOS, and Windows
+3. Write a `.goreleaser.yaml` for the Day 21 `todo` CLI targeting Linux, macOS, and Windows
 4. Embed version + build time into the `todo` binary via `-ldflags`
 5. Add a `GET /health` endpoint that returns the version and build time as JSON
 6. Build and smoke-test the Docker image: `docker build -t notes-api . && docker run -p 8080:8080 notes-api`
