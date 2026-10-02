@@ -1,6 +1,6 @@
 # Day 34: The Go Context Model — Deep Dive
 
-Day 17 introduced `context.Context` as a practical tool. Today you go deeper: how the context tree works internally, advanced propagation patterns, values done right, context in HTTP middleware and databases, detecting leaks, and testing with context.
+Day 18 introduced `context.Context` as a practical tool. Today you go deeper: how the context tree works internally, advanced propagation patterns, values done right, context in HTTP middleware and databases, detecting leaks, and testing with context.
 
 ---
 
