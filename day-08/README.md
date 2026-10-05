@@ -363,13 +363,18 @@ go build ./cmd/notes  ← succeeds, produces a binary
 **What you'll practise:** Using `internal/` to enforce encapsulation — the compiler prevents external modules from importing it.
 
 **Task:**
-Create `internal/store/store.go`. Import it successfully from within the module. Then attempt to import it from a throwaway module outside `day-32/` to observe the compiler error.
+Create `internal/store/store.go`. Import it successfully from within the module. Then attempt to import it from a throwaway module outside `day-08/` to observe the compiler error.
 
 **Steps:**
-1. Create `day-32/internal/store/store.go` with `package store`
+1. Create `day-08/internal/store/store.go` with `package store`
 2. Move `MemStore` into it
 3. Import it from `cmd/notes/main.go` — this works (same module tree)
-4. Create a temporary directory outside `day-32/` with its own `go.mod` and attempt the import
+4. Create a throwaway module outside `day-08/` and attempt the import:
+   ```bash
+   mkdir /tmp/outsider && cd /tmp/outsider
+   go mod init example.com/outsider
+   ```
+   Write a `main.go` that imports `github.com/mmussett/zero2hero-golang/day-08/internal/store`, then run `go build .`
 5. Record the exact compiler error message
 
 ```go
@@ -389,10 +394,10 @@ func NewMemStore() *MemStore { return &MemStore{next: 1} }
 
 **Expected output:**
 ```
-# From cmd/notes inside day-32: builds fine
+# From cmd/notes inside day-08: builds fine
 
 # From an outside module:
-./main.go:5:2: use of internal package day32/internal/store not allowed
+./main.go:5:2: use of internal package github.com/mmussett/zero2hero-golang/day-08/internal/store not allowed
 ```
 
 **Checkpoint:** Read the Go spec on internal packages. State the rule in a comment: only code rooted at the **parent** of `internal/` may import it.
