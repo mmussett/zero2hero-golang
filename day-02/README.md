@@ -172,7 +172,8 @@ func main() {
     f := float64(i)
     fmt.Printf("int→float64: %v\n", f)      // 7
 
-    back := int(3.99)
+    price := 3.99 // float64 variable — conversion of a non-constant is allowed
+    back := int(price)
     fmt.Printf("float→int (truncates): %v\n", back) // 3
 
     // Integer division vs float division
