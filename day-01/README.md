@@ -890,10 +890,16 @@ Add a `greet/` directory with an exported `Hello` function, then call it from `m
 
 **Steps:**
 1. Stay in the `hello-go` directory from the previous labs — a sub-package lives inside the same module, so no `go mod init` is needed.
-2. Create `greet/greet.go` with `package greet`
-3. Write an exported `Hello(name string) string` function and an unexported `buildMessage` helper
-4. In `main.go`, import `greet` using the full module path and call `greet.Hello`
-5. Bonus: try calling `greet.buildMessage` from `main.go` to see the visibility error
+2. Find your module path — it must match what you used in Lab 1:
+   ```bash
+   head -1 go.mod
+   # e.g. module github.com/yourname/hello-go
+   ```
+3. Create `greet/greet.go` with `package greet`
+4. Write an exported `Hello(name string) string` function and an unexported `buildMessage` helper
+5. Update `main.go` to import `greet` using `<your-module-path>/greet` (replace `github.com/yourname/hello-go` with whatever `head -1 go.mod` printed)
+6. Run `go run .`
+7. Bonus: try calling `greet.buildMessage` from `main.go` to see the visibility error
 
 ```go
 // greet/greet.go
@@ -913,18 +919,21 @@ func buildMessage(name string) string {
 ```
 
 ```go
-// main.go
+// main.go — replace the module path prefix to match YOUR go.mod
 package main
 
 import (
     "fmt"
-    "github.com/yourname/hello-go/greet"
+    "github.com/yourname/hello-go/greet" // change github.com/yourname/hello-go to your module path
 )
 
 func main() {
     fmt.Println(greet.Hello("Gopher"))
 }
 ```
+
+> **Why does the import path matter?**
+> Go identifies packages by `<module-path>/<directory>`. The module path comes from the first line of `go.mod`. If your `go.mod` says `module example.com/hello-go`, the import must be `example.com/hello-go/greet` — not `github.com/yourname/hello-go/greet`. The two strings must match exactly.
 
 **Expected output:**
 ```
