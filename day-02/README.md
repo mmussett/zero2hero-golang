@@ -279,6 +279,23 @@ Vowels in sentence: 11
 
 **What you'll practise:** Expression switch with range cases and a type switch on `interface{}`.
 
+> **New concepts used in this lab**
+>
+> **`any` / `interface{}`** — In Go, `interface{}` is the *empty interface*: a type that every other type satisfies. This means a variable of type `interface{}` can hold a value of *any* type — an `int`, a `string`, a struct, anything. Go 1.18 introduced `any` as a built-in alias for `interface{}` (they are identical). You will study interfaces in depth in Day 09; for now just think of `any` as "a box that can contain any value."
+>
+> **Type switch** — When you have an `any` value and need to act differently depending on its runtime type, Go provides a *type switch*:
+> ```go
+> switch t := v.(type) {
+> case int:
+>     // t is an int here
+> case string:
+>     // t is a string here
+> default:
+>     // t is the original interface{} value
+> }
+> ```
+> The `v.(type)` syntax is only valid inside a `switch` statement. It extracts the underlying concrete type of `v` and binds it to `t` with the correct type in each case branch.
+
 **Task:**
 Write a grade calculator using switch on score ranges, then write a type switch that identifies the dynamic type of values stored in an `any` (interface{}) variable.
 
