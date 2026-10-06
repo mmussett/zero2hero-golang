@@ -18,6 +18,8 @@ go env GOROOT  # /usr/local/go  (the Go installation itself)
 
 The module cache at `$GOPATH/pkg/mod/` is shared across all your projects. You never vendor dependencies unless you explicitly choose to.
 
+> **Setting up your editor?** See [GO_VSC.md](/zero2hero-golang/GO_VSC/) for a complete step-by-step guide to installing and configuring Go with Visual Studio Code, including the Go extension, language server (gopls), debugger, and recommended settings.
+
 ---
 
 ## 2. The Toolchain — Commands You'll Use Every Day
