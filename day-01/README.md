@@ -889,10 +889,11 @@ Directions: 0 1 2 3
 Add a `greet/` directory with an exported `Hello` function, then call it from `main.go`. Try to call an unexported function to see the compile error.
 
 **Steps:**
-1. Create `greet/greet.go` with `package greet`
-2. Write an exported `Hello(name string) string` function and an unexported `buildMessage` helper
-3. In `main.go`, import `greet` using the full module path and call `greet.Hello`
-4. Bonus: try calling `greet.buildMessage` from `main.go` to see the visibility error
+1. Stay in the `hello-go` directory from the previous labs — a sub-package lives inside the same module, so no `go mod init` is needed.
+2. Create `greet/greet.go` with `package greet`
+3. Write an exported `Hello(name string) string` function and an unexported `buildMessage` helper
+4. In `main.go`, import `greet` using the full module path and call `greet.Hello`
+5. Bonus: try calling `greet.buildMessage` from `main.go` to see the visibility error
 
 ```go
 // greet/greet.go
