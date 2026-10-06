@@ -73,6 +73,7 @@ go test ./...
 | `CURRICULUM.md` | Full day-by-day plan with topics and project goals |
 | `PRIMITIVES.md` | Every Go primitive type — sizes, zero values, operations, gotchas |
 | `DATA_STRUCTURES.md` | Standard-library collections with complexity tables and idioms |
+| `GOENV.md` | Every Go environment variable — defaults, usage, real-world recipes |
 
 ## Recurring Principles
 

@@ -100,6 +100,7 @@ Ready-to-build starter projects for every capstone idea.
 
 - [Primitive Types](/zero2hero-golang/PRIMITIVES/)
 - [Data Structures](/zero2hero-golang/DATA_STRUCTURES/)
+- [Go Environment Variables](/zero2hero-golang/GOENV/)
 
 ---
 

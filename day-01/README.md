@@ -1127,6 +1127,12 @@ Args:      [. Alice 42]
 
 ---
 
+## Reference
+
+- [GOENV.md](/zero2hero-golang/GOENV/) — every Go environment variable explained with examples and recipes
+
+---
+
 ## Official Documentation
 
 - [`fmt`](https://pkg.go.dev/fmt) — formatted I/O: Printf, Println, Sprintf, Fprintf
