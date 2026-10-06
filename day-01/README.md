@@ -1129,6 +1129,7 @@ Args:      [. Alice 42]
 
 ## Reference
 
+- [GO_VSC.md](/zero2hero-golang/GO_VSC/) — step-by-step setup guide for Go and Visual Studio Code
 - [GOENV.md](/zero2hero-golang/GOENV/) — every Go environment variable explained with examples and recipes
 
 ---

@@ -74,6 +74,7 @@ go test ./...
 | `PRIMITIVES.md` | Every Go primitive type — sizes, zero values, operations, gotchas |
 | `DATA_STRUCTURES.md` | Standard-library collections with complexity tables and idioms |
 | `GOENV.md` | Every Go environment variable — defaults, usage, real-world recipes |
+| `GO_VSC.md` | Step-by-step Go + Visual Studio Code setup guide for Windows, macOS, Linux |
 
 ## Recurring Principles
 
