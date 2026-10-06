@@ -834,11 +834,12 @@ Hello, Gopher!
 Declare variables using every style Go supports, add an `iota` enum, then deliberately trigger the "declared and not used" compiler error.
 
 **Steps:**
-1. Declare a `var` at package scope (outside any function)
-2. Use `:=` inside `main` for short declarations
-3. Declare a `const` block with two constants
-4. Add a `Direction` type using `iota` for `North`, `South`, `East`, `West`
-5. Comment out one usage, observe the compile error, then restore it
+1. Stay in the `hello-go` directory from Lab 1 (same module — no `go mod init` needed). Replace `main.go` with the code below.
+2. Declare a `var` at package scope (outside any function)
+3. Use `:=` inside `main` for short declarations
+4. Declare a `const` block with two constants
+5. Add a `Direction` type using `iota` for `North`, `South`, `East`, `West`
+6. Comment out one usage, observe the compile error, then restore it
 
 ```go
 package main
