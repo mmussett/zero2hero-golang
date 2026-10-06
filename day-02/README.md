@@ -275,35 +275,17 @@ Vowels in sentence: 11
 
 ---
 
-### Lab 4: switch — Grade Calculator and Type Switch
+### Lab 4: switch — Grade Calculator
 
-**What you'll practise:** Expression switch with range cases and a type switch on `interface{}`.
-
-> **New concepts used in this lab**
->
-> **`any` / `interface{}`** — In Go, `interface{}` is the *empty interface*: a type that every other type satisfies. This means a variable of type `interface{}` can hold a value of *any* type — an `int`, a `string`, a struct, anything. Go 1.18 introduced `any` as a built-in alias for `interface{}` (they are identical). You will study interfaces in depth in Day 09; for now just think of `any` as "a box that can contain any value."
->
-> **Type switch** — When you have an `any` value and need to act differently depending on its runtime type, Go provides a *type switch*:
-> ```go
-> switch t := v.(type) {
-> case int:
->     // t is an int here
-> case string:
->     // t is a string here
-> default:
->     // t is the original interface{} value
-> }
-> ```
-> The `v.(type)` syntax is only valid inside a `switch` statement. It extracts the underlying concrete type of `v` and binds it to `t` with the correct type in each case branch.
+**What you'll practise:** Expression `switch` with no condition (acts like an if/else chain) and a value `switch` on a string.
 
 **Task:**
-Write a grade calculator using switch on score ranges, then write a type switch that identifies the dynamic type of values stored in an `any` (interface{}) variable.
+Write a grade calculator that maps a score to a letter grade, then add a second switch that translates the letter grade to a descriptive label.
 
 **Steps:**
-1. Write `grade(score int) string` using a `switch` with no condition (acts like if/else chain)
-2. Call it for several scores including boundary values
-3. Write `describe(v any) string` using a type switch
-4. Call it with an `int`, `string`, `bool`, and `float64`
+1. Write `grade(score int) string` using `switch` with no condition
+2. Write `label(grade string) string` using a value switch on a string
+3. Call both for a range of scores
 
 ```go
 package main
@@ -325,46 +307,40 @@ func grade(score int) string {
     }
 }
 
-func describe(v any) string {
-    switch t := v.(type) {
-    case int:
-        return fmt.Sprintf("int(%d)", t)
-    case string:
-        return fmt.Sprintf("string(%q)", t)
-    case bool:
-        return fmt.Sprintf("bool(%v)", t)
-    case float64:
-        return fmt.Sprintf("float64(%.2f)", t)
+func label(g string) string {
+    switch g {
+    case "A":
+        return "Excellent"
+    case "B":
+        return "Good"
+    case "C":
+        return "Satisfactory"
+    case "D":
+        return "Passing"
     default:
-        return fmt.Sprintf("unknown type: %T", t)
+        return "Failing"
     }
 }
 
 func main() {
-    for _, score := range []int{95, 82, 73, 60, 45} {
-        fmt.Printf("Score %d → Grade %s\n", score, grade(score))
-    }
-
-    for _, v := range []any{42, "hello", true, 3.14} {
-        fmt.Println(describe(v))
+    scores := []int{95, 82, 73, 60, 45}
+    for _, score := range scores {
+        g := grade(score)
+        fmt.Printf("Score %d → %s (%s)\n", score, g, label(g))
     }
 }
 ```
 
 **Expected output:**
 ```
-Score 95 → Grade A
-Score 82 → Grade B
-Score 73 → Grade C
-Score 60 → Grade D
-Score 45 → Grade F
-int(42)
-string("hello")
-bool(true)
-float64(3.14)
+Score 95 → A (Excellent)
+Score 82 → B (Good)
+Score 73 → C (Satisfactory)
+Score 60 → D (Passing)
+Score 45 → F (Failing)
 ```
 
-**Checkpoint:** Add a `[]int` value to the `any` slice — confirm `describe` returns `unknown type: []int`.
+**Checkpoint:** Add scores 90 and 70 to the slice — confirm they map to `A` and `C` respectively (boundary values are inclusive).
 
 ---
 
