@@ -41,86 +41,6 @@ The module cache at `$GOPATH/pkg/mod/` is shared across all your projects. You n
 
 ---
 
-### fmt Format Verbs
-
-`fmt.Printf`, `fmt.Sprintf`, `fmt.Fprintf`, and friends use `%` verbs to format values. These appear throughout every day of the course.
-
-**General**
-
-| Verb | Meaning | Example output |
-|------|---------|----------------|
-| `%v` | Default format | `42`, `true`, `[1 2 3]` |
-| `%+v` | Struct with field names | `{Name:Alice Age:30}` |
-| `%#v` | Go syntax representation | `main.Person{Name:"Alice", Age:30}` |
-| `%T` | Type of the value | `int`, `[]string`, `main.Person` |
-| `%%` | Literal `%` sign | `%` |
-
-**Boolean**
-
-| Verb | Meaning | Example output |
-|------|---------|----------------|
-| `%t` | `true` or `false` | `true` |
-
-**Integer**
-
-| Verb | Meaning | Example output |
-|------|---------|----------------|
-| `%d` | Base 10 | `42` |
-| `%b` | Base 2 (binary) | `101010` |
-| `%o` | Base 8 (octal) | `52` |
-| `%O` | Base 8 with `0o` prefix | `0o52` |
-| `%x` | Base 16, lowercase | `2a` |
-| `%X` | Base 16, uppercase | `2A` |
-| `%c` | Unicode code point → character | `*` (for 42) |
-| `%q` | Single-quoted character literal | `'*'` |
-| `%U` | Unicode format | `U+002A` |
-
-**Floating-point**
-
-| Verb | Meaning | Example output |
-|------|---------|----------------|
-| `%f` | Decimal, no exponent | `3.141593` |
-| `%F` | Same as `%f` | `3.141593` |
-| `%.2f` | Decimal, 2 decimal places | `3.14` |
-| `%e` | Scientific notation, lowercase | `3.141593e+00` |
-| `%E` | Scientific notation, uppercase | `3.141593E+00` |
-| `%g` | Shortest of `%e` / `%f` | `3.141592653589793` |
-| `%G` | Shortest of `%E` / `%F` | `3.141592653589793` |
-| `%x` | Hexadecimal, lowercase | `-0x1.921fb54442d18p+01` |
-| `%X` | Hexadecimal, uppercase | `-0X1.921FB54442D18P+01` |
-
-**String and []byte**
-
-| Verb | Meaning | Example output |
-|------|---------|----------------|
-| `%s` | Plain string / byte slice | `hello` |
-| `%q` | Double-quoted, Go-escaped | `"hello\nworld"` |
-| `%x` | Hex encoding, lowercase | `68656c6c6f` |
-| `%X` | Hex encoding, uppercase | `68656C6C6F` |
-
-**Pointer**
-
-| Verb | Meaning | Example output |
-|------|---------|----------------|
-| `%p` | Base-16 pointer address | `0xc0000b4010` |
-
-**Width, precision and flags**
-
-| Syntax | Effect |
-|--------|--------|
-| `%8d` | Right-align in field of width 8 |
-| `%-8d` | Left-align in field of width 8 |
-| `%08d` | Zero-pad to width 8 |
-| `%8.2f` | Width 8, 2 decimal places |
-| `%+d` | Always show sign (`+42`, `-7`) |
-| `% d` | Space before positive numbers (` 42`) |
-| `%#x` | Alternate form: add `0x` prefix |
-| `%#o` | Alternate form: add `0` prefix |
-
-> **Tip:** Use `%v` when you just need to see a value. Use `%+v` to inspect structs during debugging. Use `%T` whenever you are unsure of a type. Use `%q` for strings when you need to see escape sequences and quote boundaries.
-
----
-
 ## 3. Packages — The Unit of Code Organisation
 
 Every `.go` file begins with a **package declaration**:
@@ -965,6 +885,8 @@ Directions: 0 1 2 3
 
 ### Lab 3: Your First Sub-Package
 
+> **fmt verbs:** This lab uses `fmt.Sprintf` with `%s`. For a full reference of every `%` verb, width, and flag, see [FMTVERBS.md](/zero2hero-golang/FMTVERBS/).
+
 **What you'll practise:** Creating an exported function in a sub-package and importing it from `main`.
 
 **Task:**
@@ -1213,6 +1135,7 @@ Args:      [. Alice 42]
 
 - [GO_VSC.md](/zero2hero-golang/GO_VSC/) — step-by-step setup guide for Go and Visual Studio Code
 - [GOENV.md](/zero2hero-golang/GOENV/) — every Go environment variable explained with examples and recipes
+- [FMTVERBS.md](/zero2hero-golang/FMTVERBS/) — every `fmt` format verb, flag, and width/precision modifier
 
 ---
 

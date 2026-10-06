@@ -75,6 +75,7 @@ go test ./...
 | `DATA_STRUCTURES.md` | Standard-library collections with complexity tables and idioms |
 | `GOENV.md` | Every Go environment variable — defaults, usage, real-world recipes |
 | `GO_VSC.md` | Step-by-step Go + Visual Studio Code setup guide for Windows, macOS, Linux |
+| `FMTVERBS.md` | Every `fmt` format verb, flag, and width/precision modifier with examples |
 
 ## Recurring Principles
 
