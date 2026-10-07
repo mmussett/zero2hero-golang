@@ -659,6 +659,28 @@ func (r Rectangle) Area() float64 {
 - Calling the method on a `*Rectangle` also works — Go automatically dereferences: `(*ptr).Area()`.
 - Value receivers are safe to use concurrently because each call operates on its own copy.
 
+**Classic pitfall — mutating a copy by mistake:**
+
+```go
+type Counter struct{ count int }
+
+// BUG: value receiver — c is a copy. The increment is lost.
+func (c Counter) Increment() {
+    c.count++ // mutates the copy, not the original
+}
+
+func (c Counter) Value() int { return c.count }
+
+func main() {
+    ctr := Counter{}
+    ctr.Increment()
+    ctr.Increment()
+    fmt.Println(ctr.Value()) // 0 — not 2!
+}
+```
+
+The code compiles and runs without error. The bug is silent: `Increment` modifies a copy that is discarded when the method returns. Switching to a pointer receiver fixes it (see below).
+
 #### Pointer receiver `(r *T)`
 
 The method receives a pointer to the original value. Mutations persist after the call.
@@ -669,6 +691,32 @@ func (r *Rectangle) Scale(factor float64) {
     r.Height *= factor
 }
 ```
+
+**Concrete example — mutations that persist:**
+
+```go
+type Counter struct{ count int }
+
+// Pointer receiver — c points to the original. Mutation persists.
+func (c *Counter) Increment() { c.count++ }
+func (c *Counter) Reset()     { c.count = 0 }
+func (c Counter) Value() int  { return c.count } // read-only, value receiver is fine
+
+func main() {
+    ctr := Counter{}
+    fmt.Println(ctr.Value()) // 0
+
+    ctr.Increment()
+    ctr.Increment()
+    ctr.Increment()
+    fmt.Println(ctr.Value()) // 3
+
+    ctr.Reset()
+    fmt.Println(ctr.Value()) // 0
+}
+```
+
+Go rewrites `ctr.Increment()` as `(&ctr).Increment()` automatically because `ctr` is an addressable local variable.
 
 - Calling on an addressable `T` variable is fine — Go takes the address automatically: `rect.Scale(2)` becomes `(&rect).Scale(2)`.
 - You **cannot** call a pointer-receiver method on a non-addressable value. Map elements and function return values are not addressable:
@@ -718,6 +766,26 @@ If an interface requires a method that is declared with a pointer receiver, only
 - A method declared as `func (r *Rectangle) Scale(f float64)` belongs only to `*Rectangle`.
 
 If you store a `Rectangle` (not `*Rectangle`) in an interface variable, `Scale` is not available through that interface.
+
+**Concrete example — interface satisfaction failure:**
+
+```go
+type Scaler interface {
+    Scale(factor float64)
+}
+
+func doubleIt(s Scaler) { s.Scale(2) }
+
+func main() {
+    r := Rectangle{Width: 4, Height: 3}
+
+    doubleIt(&r) // OK — *Rectangle has Scale in its method set
+    doubleIt(r)  // compile error: Rectangle does not implement Scaler
+                 //   (Scale method has pointer receiver)
+}
+```
+
+The error message is precise: Go tells you that `Scale` has a pointer receiver, which is why `Rectangle` (the value type) does not implement the interface. Using `&r` fixes it.
 
 #### Consistency rule
 
