@@ -348,6 +348,41 @@ Score 45 → F (Failing)
 
 **What you'll practise:** Defining typed constants with `iota`, using `iota` with arithmetic expressions, and printing named constants.
 
+> **What is `iota`?**
+>
+> `iota` is a built-in constant generator that resets to `0` at the start of each `const` block and increments by `1` for each successive constant spec. It lets you define a sequence of related constants without repeating yourself.
+>
+> ```go
+> const (
+>     A = iota // 0
+>     B = iota // 1
+>     C = iota // 2
+> )
+> ```
+>
+> Because the expression repeats implicitly, this is identical to:
+>
+> ```go
+> const (
+>     A = iota // 0
+>     B        // 1
+>     C        // 2
+> )
+> ```
+>
+> You can use `iota` inside any expression, which is where it gets powerful:
+>
+> | Expression | Values produced |
+> |------------|----------------|
+> | `iota` | 0, 1, 2, 3, … |
+> | `iota + 1` | 1, 2, 3, 4, … |
+> | `iota * 10` | 0, 10, 20, 30, … |
+> | `1 << iota` | 1, 2, 4, 8, … (bit flags) |
+>
+> `iota` resets to `0` at the start of each new `const` block, so two separate `const (...)` blocks each start from `0`.
+>
+> Official documentation: [Go Spec — iota](https://go.dev/ref/spec#Iota)
+
 **Task:**
 Define a `Weekday` type with `iota` starting at 1 (Monday=1), and a `Direction` type with bitfield constants. Print their values and names.
 
