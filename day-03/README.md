@@ -643,17 +643,99 @@ fmt.Println(rect.Area()) // 48
 
 Go automatically takes the address when you call a pointer-receiver method on an addressable value (`rect.Scale(2)` becomes `(&rect).Scale(2)`).
 
-**When to use each receiver kind:**
+### Receiver Kinds — In Depth
 
-| Situation | Receiver |
-|---|---|
-| Method mutates the struct | Pointer `*T` |
-| Struct is large (copying would be expensive) | Pointer `*T` |
-| Method is read-only and struct is small | Value `T` |
+#### Value receiver `(r T)`
 
-**Consistency rule:** pick one receiver kind for all methods on a type. Mixing value and pointer receivers for the same type causes confusion about which operations mutate state.
+The method receives a **copy** of the value. The original is untouched.
 
-**Method sets and interfaces:** a pointer receiver method (`*T`) is not part of the method set of value type `T` — only of `*T`. This matters for interface satisfaction, which is covered in depth on Day 09.
+```go
+func (r Rectangle) Area() float64 {
+    return r.Width * r.Height // reads r; r is a copy
+}
+```
+
+- Mutations inside the method do not affect the caller's variable.
+- Calling the method on a `*Rectangle` also works — Go automatically dereferences: `(*ptr).Area()`.
+- Value receivers are safe to use concurrently because each call operates on its own copy.
+
+#### Pointer receiver `(r *T)`
+
+The method receives a pointer to the original value. Mutations persist after the call.
+
+```go
+func (r *Rectangle) Scale(factor float64) {
+    r.Width *= factor  // mutates the original Rectangle
+    r.Height *= factor
+}
+```
+
+- Calling on an addressable `T` variable is fine — Go takes the address automatically: `rect.Scale(2)` becomes `(&rect).Scale(2)`.
+- You **cannot** call a pointer-receiver method on a non-addressable value. Map elements and function return values are not addressable:
+
+```go
+rects := map[string]Rectangle{"r": {4, 3}}
+rects["r"].Scale(2) // compile error: cannot take the address of a map element
+```
+
+The fix: store a pointer in the map instead (`map[string]*Rectangle`), or copy the value out, mutate it, and store it back.
+
+#### Nil pointer receivers
+
+A method with a pointer receiver can be called on a `nil` pointer — as long as the method does not dereference the nil. This is occasionally useful:
+
+```go
+type Node struct {
+    Val  int
+    Next *Node
+}
+
+func (n *Node) Len() int {
+    if n == nil {
+        return 0
+    }
+    return 1 + n.Next.Len()
+}
+
+var head *Node
+fmt.Println(head.Len()) // 0, not a panic
+```
+
+#### Method sets — the rule that matters for interfaces
+
+Go tracks which methods are reachable on a type and on a pointer to that type. These are called **method sets**.
+
+| Type | Method set |
+|------|-----------|
+| `T` | Value receiver methods only |
+| `*T` | Value receiver methods **and** pointer receiver methods |
+
+This asymmetry has one practical consequence: **interface satisfaction**.
+
+If an interface requires a method that is declared with a pointer receiver, only `*T` satisfies that interface — not `T`. This is covered in depth on Day 09, but the core rule is:
+
+- A method declared as `func (r Rectangle) Area() float64` belongs to both `Rectangle` and `*Rectangle`.
+- A method declared as `func (r *Rectangle) Scale(f float64)` belongs only to `*Rectangle`.
+
+If you store a `Rectangle` (not `*Rectangle`) in an interface variable, `Scale` is not available through that interface.
+
+#### Consistency rule
+
+Pick **one** receiver kind for all methods on a type and stick with it. Mixing value and pointer receivers is allowed by the compiler but leads to a confusing API: callers cannot tell at a glance whether a method mutates state.
+
+The only common exception is implementing standard library interfaces like `String() string` (`fmt.Stringer`) — these are typically value receivers even on types that otherwise use pointer receivers, because they are read-only by definition.
+
+#### When to choose which receiver
+
+| Situation | Use |
+|-----------|-----|
+| Method mutates the receiver | Pointer `*T` |
+| Type contains a `sync.Mutex` or similar (copying corrupts it) | Pointer `*T` |
+| Type is large and copying on every call would be expensive | Pointer `*T` |
+| Method only reads a small struct | Value `T` |
+| Immutability is important (e.g. a mathematical type like `Vector`) | Value `T` |
+
+When in doubt, use a pointer receiver. It is always correct and avoids the pitfall of accidentally mutating a copy and wondering why the original did not change.
 
 ---
 
