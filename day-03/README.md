@@ -1,10 +1,130 @@
 # Day 03: Functions, Structs, and Error Handling
 
-## Core Concepts
+## What You'll Learn Today
 
-### Functions
+- How to define and call functions with various parameter and return styles
+- Multiple return values and why they replace exceptions in Go
+- Named return values and when to use them
+- Variadic functions for variable-length argument lists
+- Anonymous functions, closures, and first-class functions
+- `defer` for deferred execution and resource cleanup
+- `panic` and `recover` for handling unrecoverable situations
+- Recursion, its tradeoffs, and when to prefer iteration
+- Structs as Go's primary data-grouping construct
+- Methods with value and pointer receivers
 
-Go functions can return **multiple values** — the primary mechanism for returning both a result and an error.
+---
+
+## 1. Function Basics
+
+The syntax for a Go function is:
+
+```
+func name(parameters) returnType {
+    body
+}
+```
+
+A function with no parameters and no return value:
+
+```go
+func sayHello() {
+    fmt.Println("Hello, Gopher!")
+}
+```
+
+A function with one parameter and one return value:
+
+```go
+func double(n int) int {
+    return n * 2
+}
+```
+
+Calling a function:
+
+```go
+sayHello()         // Hello, Gopher!
+fmt.Println(double(7))  // 14
+```
+
+Functions are first-class values in Go — they can be assigned to variables, passed as arguments, and returned from other functions. You will explore all of these in later sections.
+
+---
+
+## 2. Parameters
+
+**Single parameter:**
+
+```go
+func greet(name string) string {
+    return "Hello, " + name + "!"
+}
+```
+
+**Multiple parameters with explicit types:**
+
+```go
+func add(a int, b int) int {
+    return a + b
+}
+```
+
+**Shared-type shorthand:** when consecutive parameters share a type, only the last needs the type annotation.
+
+```go
+func add(a, b int) int {  // same as add(a int, b int) int
+    return a + b
+}
+```
+
+**Mixed types:**
+
+```go
+func repeat(s string, n int) string {
+    result := ""
+    for i := 0; i < n; i++ {
+        result += s
+    }
+    return result
+}
+```
+
+**Parameters are passed by value.** The function receives a copy of each argument; mutating the copy does not affect the caller's variable.
+
+```go
+func triple(n int) {
+    n = n * 3 // modifies only the local copy
+}
+
+func main() {
+    x := 5
+    triple(x)
+    fmt.Println(x) // still 5
+}
+```
+
+**To mutate the caller's variable, pass a pointer:**
+
+```go
+func tripleInPlace(n *int) {
+    *n = *n * 3 // dereference and mutate
+}
+
+func main() {
+    x := 5
+    tripleInPlace(&x) // pass the address of x
+    fmt.Println(x)    // 15
+}
+```
+
+Pointer parameters are covered more fully on Day 06. For now, remember: pass a pointer when you need the function to modify the original.
+
+---
+
+## 3. Multiple Return Values
+
+Go functions can return more than one value. The most common pattern is returning a result alongside an error:
 
 ```go
 func divide(a, b float64) (float64, error) {
@@ -13,29 +133,394 @@ func divide(a, b float64) (float64, error) {
     }
     return a / b, nil
 }
+```
 
+The caller handles both values:
+
+```go
 result, err := divide(10, 2)
 if err != nil {
     log.Fatal(err)
 }
+fmt.Println(result) // 5
 ```
 
-Named return values create pre-declared variables and enable bare `return`:
+**Ignoring a return value with `_`:**
+
+```go
+result, _ := divide(10, 2) // discard the error (only do this when you are certain no error can occur)
+```
+
+**Why multiple returns replace exceptions:**
+In most languages, errors are communicated via exceptions that can be raised anywhere and caught anywhere, making control flow implicit. Go makes error handling explicit: a function that can fail says so in its signature, and the caller is forced to acknowledge the error at the call site. This results in code that is easier to trace and reason about.
+
+---
+
+## 4. Named Return Values
+
+You can give names to return values. Named returns create pre-declared variables that are initialised to their zero values. A bare `return` returns whatever those variables currently hold.
 
 ```go
 func minMax(nums []int) (min, max int) {
     min, max = nums[0], nums[0]
     for _, n := range nums[1:] {
-        if n < min { min = n }
-        if n > max { max = n }
+        if n < min {
+            min = n
+        }
+        if n > max {
+            max = n
+        }
     }
     return // returns min and max
 }
 ```
 
-Use named returns for documentation, not as a shortcut — bare returns in long functions obscure what is being returned.
+**When to use named returns:**
+- Short functions where the names serve as documentation
+- Functions where the bare `return` makes the logic clearer
 
-### Structs
+**When to avoid named returns:**
+- Long functions — a bare `return` in a 50-line function hides what is being returned; prefer explicit `return min, max`
+- Named returns combined with `defer` can produce surprising results for beginners (a deferred function can modify a named return variable before it reaches the caller)
+
+---
+
+## 5. Variadic Functions
+
+A variadic parameter accepts zero or more arguments of a given type. Inside the function, it is a slice.
+
+```go
+func sum(nums ...int) int {
+    total := 0
+    for _, n := range nums {
+        total += n
+    }
+    return total
+}
+```
+
+**Calling with individual values:**
+
+```go
+fmt.Println(sum(1, 2, 3))    // 6
+fmt.Println(sum(10, 20))     // 30
+fmt.Println(sum())           // 0 (zero arguments is valid)
+```
+
+**Spreading a slice into a variadic call:** append `...` after the slice.
+
+```go
+nums := []int{1, 2, 3, 4, 5}
+fmt.Println(sum(nums...)) // 15
+```
+
+**Rules:**
+- The variadic parameter must be the last (or only) parameter.
+- You cannot have two variadic parameters.
+
+`fmt.Println` is itself variadic — its signature is `func Println(a ...any) (n int, err error)`.
+
+```go
+fmt.Println("one", "two", "three") // passes three arguments to the variadic parameter
+```
+
+**Enforcing at least one argument** by combining a required first parameter with a variadic rest:
+
+```go
+func max(first int, rest ...int) int {
+    m := first
+    for _, n := range rest {
+        if n > m {
+            m = n
+        }
+    }
+    return m
+}
+
+fmt.Println(max(3))          // 3
+fmt.Println(max(3, 1, 4, 1, 5, 9)) // 9
+// max() would not compile — first is required
+```
+
+---
+
+## 6. Anonymous Functions
+
+An anonymous function (function literal) is a function defined without a name.
+
+```go
+f := func(x int) int {
+    return x * x
+}
+fmt.Println(f(5)) // 25
+```
+
+**Immediately Invoked Function Expression (IIFE):** define and call in one step.
+
+```go
+result := func(x int) int {
+    return x * x
+}(5)
+fmt.Println(result) // 25
+```
+
+**Closures:** an anonymous function that references variables from the enclosing scope. The function captures those variables — not copies of their values at the time of creation, but references to the variables themselves.
+
+```go
+func makeCounter() func() int {
+    count := 0
+    return func() int {
+        count++ // captures and modifies count from makeCounter's scope
+        return count
+    }
+}
+
+func main() {
+    counter := makeCounter()
+    fmt.Println(counter()) // 1
+    fmt.Println(counter()) // 2
+    fmt.Println(counter()) // 3
+
+    // A second counter has its own independent count variable.
+    counter2 := makeCounter()
+    fmt.Println(counter2()) // 1
+}
+```
+
+**Passing functions as arguments:** Go functions are values, so any `func` type can be a parameter.
+
+```go
+func apply(nums []int, fn func(int) int) []int {
+    result := make([]int, len(nums))
+    for i, n := range nums {
+        result[i] = fn(n)
+    }
+    return result
+}
+
+func main() {
+    nums := []int{1, 2, 3, 4, 5}
+    doubled := apply(nums, func(n int) int { return n * 2 })
+    fmt.Println(doubled) // [2 4 6 8 10]
+}
+```
+
+---
+
+## 7. defer — Deferred Function Calls
+
+`defer` schedules a function call to run when the surrounding function returns, regardless of how it returns (normally, via `return`, or via `panic`).
+
+```go
+func example() {
+    defer fmt.Println("third")  // runs last
+    defer fmt.Println("second") // runs second
+    defer fmt.Println("first")  // runs first
+    fmt.Println("body")
+}
+```
+
+Output:
+```
+body
+first
+second
+third
+```
+
+Deferred calls execute in **LIFO (last in, first out)** order — the last `defer` statement reached runs first.
+
+**Common use: resource cleanup.** Placing a `defer` call immediately after acquiring a resource ensures the resource is always released, even if an error occurs partway through the function.
+
+```go
+func processFile(path string) error {
+    f, err := os.Open(path)
+    if err != nil {
+        return err
+    }
+    defer f.Close() // guaranteed to run when processFile returns
+
+    // ... read from f ...
+    return nil
+}
+```
+
+Without `defer`, you would need to call `f.Close()` on every return path. With `defer`, there is exactly one close call that covers all paths.
+
+**Loop gotcha:** `defer` defers until the *function* returns, not until the loop iteration ends.
+
+```go
+// Wrong: all files stay open until processAll returns.
+func processAll(paths []string) {
+    for _, path := range paths {
+        f, _ := os.Open(path)
+        defer f.Close() // does NOT close at end of this iteration
+        // ... use f ...
+    }
+}
+
+// Correct: wrap in a helper function so defer runs per iteration.
+func processOne(path string) {
+    f, _ := os.Open(path)
+    defer f.Close() // runs when processOne returns (once per iteration)
+    // ... use f ...
+}
+
+func processAll(paths []string) {
+    for _, path := range paths {
+        processOne(path)
+    }
+}
+```
+
+**Arguments are evaluated immediately.** Even though the call is deferred, its arguments are evaluated at the `defer` statement, not when the deferred call runs.
+
+```go
+func main() {
+    x := 0
+    defer fmt.Println("x =", x) // captures x=0 right now
+    x = 42
+    // prints "x = 0", not "x = 42"
+}
+```
+
+Reference: https://go.dev/blog/defer-panic-and-recover
+
+---
+
+## 8. Panic and Recover
+
+**`panic`** stops the current function's normal execution. Go unwinds the call stack, running any deferred functions along the way. If nothing recovers from the panic, the program prints a stack trace and exits.
+
+```go
+func mustPositive(n int) int {
+    if n <= 0 {
+        panic(fmt.Sprintf("expected positive number, got %d", n))
+    }
+    return n
+}
+```
+
+**When to panic:**
+- Programmer errors that represent "this should never happen" invariants (e.g., a configuration that was supposed to be validated at startup is missing).
+- Initialisation errors in `init()` or variable initialisers that make the program non-functional.
+
+**When NOT to panic:**
+- Expected failure conditions (file not found, invalid user input, network errors). Use error returns instead.
+
+**`recover`** must be called inside a deferred function. It catches an in-progress panic and returns the value passed to `panic`. If there is no panic, `recover` returns `nil`.
+
+```go
+func safeDiv(a, b int) (result int, err error) {
+    defer func() {
+        if r := recover(); r != nil {
+            err = fmt.Errorf("recovered from panic: %v", r)
+        }
+    }()
+    result = a / b // panics if b == 0 (integer division by zero)
+    return result, nil
+}
+
+func main() {
+    res, err := safeDiv(10, 2)
+    fmt.Println(res, err) // 5 <nil>
+
+    res, err = safeDiv(10, 0)
+    fmt.Println(res, err) // 0 recovered from panic: runtime error: integer divide by zero
+}
+```
+
+The pattern is:
+```go
+defer func() {
+    if r := recover(); r != nil {
+        // handle the panic — typically convert to an error
+    }
+}()
+```
+
+Note: the deferred function must be an anonymous function called with `()` at the end. If you write `defer recover()`, it will not work because `recover()` executes as the argument to `defer`, not inside a deferred call.
+
+Reference: https://go.dev/blog/defer-panic-and-recover
+
+---
+
+## 9. Recursion
+
+A function that calls itself is recursive. Every recursive function needs a **base case** — a condition under which it stops calling itself — to prevent infinite recursion.
+
+**Factorial — recursive:**
+
+```go
+func factorial(n int) int {
+    if n <= 1 { // base case
+        return 1
+    }
+    return n * factorial(n-1)
+}
+
+fmt.Println(factorial(5)) // 120
+```
+
+**Factorial — iterative (usually preferred):**
+
+```go
+func factorialIter(n int) int {
+    result := 1
+    for i := 2; i <= n; i++ {
+        result *= i
+    }
+    return result
+}
+```
+
+The iterative version is generally preferred: it avoids function call overhead and cannot exhaust the call stack for large inputs.
+
+**Fibonacci — recursive (exponential time complexity):**
+
+```go
+func fib(n int) int {
+    if n <= 1 {
+        return n
+    }
+    return fib(n-1) + fib(n-2)
+}
+```
+
+`fib(40)` already makes over a billion calls. Memoisation (caching already-computed results) or iteration solves this. Day 05 (maps) will show how to memoize with a map.
+
+**Real-world use: walking a tree.** Recursive algorithms are natural for tree-shaped data structures where each node can have sub-nodes of the same type.
+
+```go
+type TreeNode struct {
+    Value    int
+    Children []*TreeNode
+}
+
+// sum returns the sum of all values in the tree.
+func sum(node *TreeNode) int {
+    if node == nil {
+        return 0
+    }
+    total := node.Value
+    for _, child := range node.Children {
+        total += sum(child)
+    }
+    return total
+}
+```
+
+**Stack depth:** Go goroutines start with a small stack (2–8 KB) that grows dynamically. Very deep recursion — millions of frames — can exhaust available memory. For large inputs, prefer iteration.
+
+**Tail recursion:** Go does NOT optimise tail calls. A tail-recursive function in Go still grows the stack one frame per call, just like a non-tail-recursive one. Do not rely on tail-call optimisation.
+
+---
+
+## 10. Structs
+
+A struct groups related fields under a single named type.
+
+**Declaration:**
 
 ```go
 type Person struct {
@@ -43,57 +528,191 @@ type Person struct {
     Email string
     Age   int
 }
-
-// Struct literal
-p := Person{Name: "Alice", Email: "alice@example.com", Age: 30}
-
-// Field access
-fmt.Println(p.Name)
-p.Age++
 ```
 
-Fields not listed in a literal are set to their zero values. Always use field names in literals — positional initialisation breaks when fields are added.
+**Zero values:** fields not set in a literal are initialised to their zero values (`""` for strings, `0` for ints, `false` for bools, `nil` for pointers and slices).
 
-### Methods
-
-A method is a function with a receiver:
+**Struct literals — always use field names:**
 
 ```go
-func (p Person) String() string {
-    return fmt.Sprintf("%s <%s>", p.Name, p.Email)
+p := Person{Name: "Alice", Email: "alice@example.com", Age: 30}
+```
+
+Positional initialisation (`Person{"Alice", "alice@example.com", 30}`) is fragile — adding a field to the struct breaks every positional literal. Always use field names.
+
+**Field access and mutation:**
+
+```go
+fmt.Println(p.Name) // Alice
+p.Age++
+fmt.Println(p.Age)  // 31
+```
+
+**Anonymous structs** are useful for one-off data shapes, such as grouping local variables or decoding JSON:
+
+```go
+point := struct {
+    X, Y int
+}{X: 10, Y: 20}
+fmt.Println(point.X, point.Y) // 10 20
+```
+
+**Comparing structs:** two struct values are equal if all their fields are equal, provided every field type is comparable. Structs with slice or map fields are not directly comparable with `==`.
+
+```go
+a := Person{Name: "Alice", Email: "alice@example.com", Age: 30}
+b := Person{Name: "Alice", Email: "alice@example.com", Age: 30}
+fmt.Println(a == b) // true
+```
+
+**Structs are value types.** Assigning one struct variable to another copies the entire struct. Modifying the copy does not affect the original.
+
+```go
+q := p          // q is a full copy of p
+q.Name = "Bob"
+fmt.Println(p.Name) // Alice — p is unchanged
+fmt.Println(q.Name) // Bob
+```
+
+---
+
+## 11. Methods
+
+A method is a function with a receiver — a named type that the function is associated with.
+
+```go
+type Rectangle struct {
+    Width, Height float64
 }
 
-func (p *Person) Birthday() {
-    p.Age++  // pointer receiver — modifies the original
+// Value receiver — reads the struct, does not mutate it.
+func (r Rectangle) Area() float64 {
+    return r.Width * r.Height
+}
+
+// Pointer receiver — mutates the struct.
+func (r *Rectangle) Scale(factor float64) {
+    r.Width *= factor
+    r.Height *= factor
 }
 ```
 
-Use a **pointer receiver** when the method mutates state or the struct is large. Use a **value receiver** when the method is read-only. Be consistent within a type — don't mix.
+Calling methods:
+
+```go
+rect := Rectangle{Width: 4, Height: 3}
+fmt.Println(rect.Area()) // 12
+
+rect.Scale(2)
+fmt.Println(rect.Area()) // 48
+```
+
+Go automatically takes the address when you call a pointer-receiver method on an addressable value (`rect.Scale(2)` becomes `(&rect).Scale(2)`).
+
+**When to use each receiver kind:**
+
+| Situation | Receiver |
+|---|---|
+| Method mutates the struct | Pointer `*T` |
+| Struct is large (copying would be expensive) | Pointer `*T` |
+| Method is read-only and struct is small | Value `T` |
+
+**Consistency rule:** pick one receiver kind for all methods on a type. Mixing value and pointer receivers for the same type causes confusion about which operations mutate state.
+
+**Method sets and interfaces:** a pointer receiver method (`*T`) is not part of the method set of value type `T` — only of `*T`. This matters for interface satisfaction, which is covered in depth on Day 09.
 
 ---
 
 ## Labs
 
-### Lab 1: Function Fundamentals
+### Lab 1: Function Basics and Multiple Returns
 
-**What you'll practise:** Multiple return values, named returns, and variadic functions.
+**What you'll practise:** Defining functions with single and multiple parameters, shared-type shorthand, multiple return values, and the `(result, error)` idiom.
 
 **Task:**
-Write three functions — `sum`, `minMax`, and `product` — that demonstrate Go's function features, then call them from `main`.
+Write three functions — `greet`, `add`, and `divide` — then call them from `main`.
 
 **Steps:**
-1. Write `sum(nums ...int) int` — variadic, sums all arguments
-2. Write `minMax(nums []int) (min, max int)` — named returns, no bare return
-3. Write `product(a, b float64) (result float64, err error)` — returns an error if either argument is negative
-4. Call all three from `main` and print results
+1. Write `greet(name string) string` — returns `"Hello, " + name + "!"`
+2. Write `add(a, b int) int` using the shared-type shorthand
+3. Write `divide(a, b float64) (float64, error)` — returns an error if `b` is zero
+4. In `main`, call all three; handle the error from `divide`; ignore the result of a successful call with `_` to show the syntax
 
 ```go
 package main
 
 import (
-    "fmt"
     "errors"
+    "fmt"
 )
+
+func greet(name string) string {
+    return "Hello, " + name + "!"
+}
+
+// Shared-type shorthand: a and b are both int.
+func add(a, b int) int {
+    return a + b
+}
+
+func divide(a, b float64) (float64, error) {
+    if b == 0 {
+        return 0, errors.New("division by zero")
+    }
+    return a / b, nil
+}
+
+func main() {
+    fmt.Println(greet("Gopher"))
+    fmt.Println("3 + 4 =", add(3, 4))
+
+    result, err := divide(10, 4)
+    if err != nil {
+        fmt.Println("error:", err)
+    } else {
+        fmt.Printf("10 / 4 = %.2f\n", result)
+    }
+
+    // Ignore the result — only care that there is no error.
+    _, err = divide(9, 3)
+    fmt.Println("divide(9,3) error:", err)
+
+    // Error case.
+    _, err = divide(5, 0)
+    fmt.Println("divide(5,0) error:", err)
+}
+```
+
+**Expected output:**
+```
+Hello, Gopher!
+3 + 4 = 7
+10 / 4 = 2.50
+divide(9,3) error: <nil>
+divide(5,0) error: division by zero
+```
+
+**Checkpoint:** Change `add(3, 4)` to `add(3, 4, 5)` and confirm the compiler rejects it — Go is strictly typed in arity. Restore before continuing.
+
+---
+
+### Lab 2: Variadic Functions
+
+**What you'll practise:** Writing variadic functions, calling them with individual values and with spread slices, and enforcing a minimum argument count.
+
+**Task:**
+Write `sum` and `maxOf`, then call them in different ways.
+
+**Steps:**
+1. Write `sum(nums ...int) int` — returns the sum of all arguments; returns 0 for zero arguments
+2. Write `maxOf(first int, rest ...int) int` — requires at least one argument (enforced by the type system); returns the largest value
+3. Call `sum` with individual values, with no arguments, and with a spread slice
+4. Call `maxOf` with one argument and with several
+
+```go
+package main
+
+import "fmt"
 
 func sum(nums ...int) int {
     total := 0
@@ -103,61 +722,56 @@ func sum(nums ...int) int {
     return total
 }
 
-func minMax(nums []int) (min, max int) {
-    min, max = nums[0], nums[0]
-    for _, n := range nums[1:] {
-        if n < min { min = n }
-        if n > max { max = n }
+// maxOf requires at least one argument; rest may be empty.
+func maxOf(first int, rest ...int) int {
+    m := first
+    for _, n := range rest {
+        if n > m {
+            m = n
+        }
     }
-    return min, max // explicit is clearer than bare return
-}
-
-func product(a, b float64) (float64, error) {
-    if a < 0 || b < 0 {
-        return 0, errors.New("negative inputs not allowed")
-    }
-    return a * b, nil
+    return m
 }
 
 func main() {
-    fmt.Println("sum:", sum(1, 2, 3, 4, 5))
+    fmt.Println("sum(1,2,3):", sum(1, 2, 3))
+    fmt.Println("sum():", sum())
 
-    nums := []int{3, 1, 4, 1, 5, 9, 2, 6}
-    lo, hi := minMax(nums)
-    fmt.Printf("min=%d max=%d\n", lo, hi)
+    nums := []int{4, 7, 2, 9, 1}
+    fmt.Println("sum(nums...):", sum(nums...)) // spread the slice
 
-    p, err := product(3.0, 4.0)
-    fmt.Printf("product: %.1f err: %v\n", p, err)
-
-    _, err = product(-1.0, 4.0)
-    fmt.Printf("negative product err: %v\n", err)
+    fmt.Println("maxOf(42):", maxOf(42))
+    fmt.Println("maxOf(3,1,4,1,5,9,2,6):", maxOf(3, 1, 4, 1, 5, 9, 2, 6))
+    fmt.Println("maxOf(nums...):", maxOf(nums[0], nums[1:]...))
 }
 ```
 
 **Expected output:**
 ```
-sum: 15
-min=1 max=9
-product: 12.0 err: <nil>
-negative product err: negative inputs not allowed
+sum(1,2,3): 6
+sum(): 0
+sum(nums...): 23
+maxOf(42): 42
+maxOf(3,1,4,1,5,9,2,6): 9
+maxOf(nums...): 9
 ```
 
-**Checkpoint:** `sum()` with no arguments returns 0. `minMax([]int{5})` returns `5, 5`. The error path for `product` returns a non-nil error.
+**Checkpoint:** Attempt to call `maxOf()` with no arguments and confirm the compiler rejects it — the `first int` parameter is not variadic and is therefore required.
 
 ---
 
-### Lab 2: First-Class Functions
+### Lab 3: Anonymous Functions and Closures
 
-**What you'll practise:** Passing functions as arguments, returning functions from functions (closures), and writing a generic `apply` transformer.
+**What you'll practise:** Function literals, immediately-invoked function expressions, closures that capture enclosing state, and passing functions as arguments.
 
 **Task:**
-Write an `adder` factory that returns a closure, and an `apply` function that transforms a slice using any `func(int) int`.
+Write an `adder` factory that returns a closure, an `apply` transformer, and a `makeCounter` function.
 
 **Steps:**
 1. Write `adder(x int) func(int) int` — returns a closure that adds `x` to its argument
-2. Write `apply(nums []int, f func(int) int) []int` — returns a new slice with `f` applied to each element
-3. Create `double` and `square` as named `func` variables
-4. Use `apply` with `adder(10)`, `double`, and `square`
+2. Write `apply(nums []int, fn func(int) int) []int` — applies `fn` to every element
+3. Write `makeCounter() func() int` — each call to the returned function increments an internal counter
+4. Use an IIFE (immediately-invoked function expression) to compute `5 * 5` inline
 
 ```go
 package main
@@ -171,268 +785,353 @@ func adder(x int) func(int) int {
     }
 }
 
-// apply returns a new slice with f applied to every element.
-func apply(nums []int, f func(int) int) []int {
+// apply returns a new slice with fn applied to each element.
+func apply(nums []int, fn func(int) int) []int {
     result := make([]int, len(nums))
     for i, n := range nums {
-        result[i] = f(n)
+        result[i] = fn(n)
     }
     return result
 }
 
+// makeCounter returns a function that increments an internal counter on each call.
+func makeCounter() func() int {
+    count := 0
+    return func() int {
+        count++
+        return count
+    }
+}
+
 func main() {
     add10 := adder(10)
-    fmt.Println(add10(5))   // 15
-    fmt.Println(add10(20))  // 30
+    fmt.Println("add10(5):", add10(5))   // 15
+    fmt.Println("add10(20):", add10(20)) // 30
 
-    double := func(n int) int { return n * 2 }
-    square := func(n int) int { return n * n }
+    // Two closures from the same factory have independent state.
+    add100 := adder(100)
+    fmt.Println("add100(5):", add100(5)) // 105
 
     nums := []int{1, 2, 3, 4, 5}
-    fmt.Println("original:", nums)
-    fmt.Println("+10:     ", apply(nums, adder(10)))
-    fmt.Println("doubled: ", apply(nums, double))
-    fmt.Println("squared: ", apply(nums, square))
+    fmt.Println("doubled:", apply(nums, func(n int) int { return n * 2 }))
+    fmt.Println("+10:    ", apply(nums, adder(10)))
+
+    // IIFE — define and call in one expression.
+    squared := func(x int) int { return x * x }(5)
+    fmt.Println("5 squared (IIFE):", squared)
+
+    // Counter closure.
+    counter := makeCounter()
+    fmt.Println(counter(), counter(), counter()) // 1 2 3
+
+    counter2 := makeCounter() // independent state
+    fmt.Println("counter2:", counter2()) // 1
 }
 ```
 
 **Expected output:**
 ```
-15
-30
-original: [1 2 3 4 5]
-+10:      [11 12 13 14 15]
-doubled:  [2 4 6 8 10]
-squared:  [1 4 9 16 25]
+add10(5): 15
+add10(20): 30
+add100(5): 105
+doubled: [2 4 6 8 10]
++10:     [11 12 13 14 15]
+5 squared (IIFE): 25
+1 2 3
+counter2: 1
 ```
 
-**Checkpoint:** `adder(0)` returns a function that is the identity. Create two separate `adder` closures with different `x` values and confirm they don't interfere with each other.
+**Checkpoint:** Confirm that `add10` and `add100` do not share state — calling `add10` does not affect `add100`'s captured `x`. Confirm that `counter` and `counter2` do not share state.
 
 ---
 
-### Lab 3: Struct Fundamentals
+### Lab 4: defer — Resource Cleanup
 
-**What you'll practise:** Defining a struct, writing a constructor, adding pointer receiver methods, and implementing `fmt.Stringer`.
-
-**Task:**
-Define a `Person` struct with `Name`, `Age`, and `Email` fields. Write a constructor that validates age, a pointer receiver `Birthday()` method, and a value receiver `String()` method.
-
-**Steps:**
-1. Define `type Person struct` with three fields
-2. Write `NewPerson(name string, age int, email string) (Person, error)` — error if age < 0
-3. Write `(p *Person) Birthday()` — increments age (pointer receiver to mutate)
-4. Write `(p Person) String() string` — returns a formatted string (value receiver — read-only)
-5. Call `fmt.Println(p)` — Go calls `String()` automatically
-
-```go
-package main
-
-import (
-    "fmt"
-    "errors"
-)
-
-type Person struct {
-    Name  string
-    Age   int
-    Email string
-}
-
-func NewPerson(name string, age int, email string) (Person, error) {
-    if age < 0 {
-        return Person{}, errors.New("age cannot be negative")
-    }
-    return Person{Name: name, Age: age, Email: email}, nil
-}
-
-func (p *Person) Birthday() {
-    p.Age++
-}
-
-func (p Person) String() string {
-    return fmt.Sprintf("%s (age %d) <%s>", p.Name, p.Age, p.Email)
-}
-
-func main() {
-    p, err := NewPerson("Alice", 30, "alice@example.com")
-    if err != nil {
-        fmt.Println("error:", err)
-        return
-    }
-
-    fmt.Println(p) // calls p.String() automatically
-    p.Birthday()
-    fmt.Println(p)
-
-    _, err = NewPerson("Bob", -1, "bob@example.com")
-    fmt.Println("bad person error:", err)
-}
-```
-
-**Expected output:**
-```
-Alice (age 30) <alice@example.com>
-Alice (age 31) <alice@example.com>
-bad person error: age cannot be negative
-```
-
-**Checkpoint:** Confirm that `p.Birthday()` on a value `p` (not a pointer) does NOT change the original — only `(&p).Birthday()` or a pointer variable would. Go auto-takes address when the variable is addressable.
-
----
-
-### Lab 4: Struct Embedding
-
-**What you'll practise:** Embedding one struct inside another, accessing promoted fields directly, and overriding promoted methods.
+**What you'll practise:** Scheduling deferred calls, observing LIFO execution order, using `defer` for cleanup, and understanding when arguments are captured.
 
 **Task:**
-Embed an `Address` struct inside `Person`. Access `Address` fields directly on `Person`, then add a `String()` override on `Person` that calls the embedded type's method.
+Write three short programs (all in one `main`) that demonstrate LIFO order, a cleanup pattern, and immediate argument capture.
 
 **Steps:**
-1. Define `type Address struct` with `Street`, `City`, `Country`
-2. Add a `String() string` method on `Address`
-3. Embed `Address` in `Person` (from Lab 3 or a fresh struct)
-4. Access `p.City` directly (promoted field)
-5. Override `String()` on `Person` to include address info
+1. Call three `defer fmt.Println(...)` statements and observe the order
+2. Write a `simulateWork` function that acquires and releases a simulated resource using `defer`
+3. Demonstrate that deferred arguments are captured at the `defer` statement, not at execution time
 
 ```go
 package main
 
 import "fmt"
 
-type Address struct {
-    Street  string
-    City    string
-    Country string
+// Resource simulates something that must be closed after use.
+type Resource struct {
+    name string
 }
 
-func (a Address) String() string {
-    return fmt.Sprintf("%s, %s, %s", a.Street, a.City, a.Country)
-}
+func (r Resource) open()  { fmt.Println("opened:", r.name) }
+func (r Resource) close() { fmt.Println("closed:", r.name) }
 
-type Person struct {
-    Name    string
-    Age     int
-    Address // embedded — promotes Street, City, Country, and String()
-}
+func simulateWork(name string) {
+    r := Resource{name: name}
+    r.open()
+    defer r.close() // guaranteed to run when simulateWork returns
 
-func (p Person) String() string {
-    // Override Address.String() with a richer format.
-    return fmt.Sprintf("%s (age %d) at %s", p.Name, p.Age, p.Address.String())
+    fmt.Println("working with:", r.name)
+    // If an error happened here and we returned early, r.close() still runs.
 }
 
 func main() {
-    p := Person{
-        Name: "Alice",
-        Age:  30,
-        Address: Address{
-            Street:  "123 Gopher Lane",
-            City:    "Gophertown",
-            Country: "Goland",
-        },
-    }
+    // 1. LIFO order.
+    fmt.Println("--- LIFO order ---")
+    defer fmt.Println("third (deferred first, runs last)")
+    defer fmt.Println("second")
+    defer fmt.Println("first (deferred last, runs first)")
+    fmt.Println("main body")
 
-    // Promoted fields — no need to write p.Address.City
-    fmt.Println("City:", p.City)
-    fmt.Println("Country:", p.Country)
+    // 2. Cleanup pattern.
+    fmt.Println("\n--- cleanup pattern ---")
+    simulateWork("database-connection")
+    simulateWork("temp-file")
 
-    // Person.String() overrides Address.String()
-    fmt.Println(p)
-
-    // Access the embedded type's method explicitly
-    fmt.Println("Address only:", p.Address.String())
+    // 3. Arguments captured immediately.
+    fmt.Println("\n--- argument capture ---")
+    x := 0
+    defer fmt.Println("deferred x =", x) // captures x=0 right now
+    x = 99
+    fmt.Println("current x =", x) // 99; deferred call still prints 0
 }
 ```
 
 **Expected output:**
 ```
-City: Gophertown
-Country: Goland
-Alice (age 30) at 123 Gopher Lane, Gophertown, Goland
-Address only: 123 Gopher Lane, Gophertown, Goland
+--- LIFO order ---
+main body
+--- cleanup pattern ---
+opened: database-connection
+working with: database-connection
+closed: database-connection
+opened: temp-file
+working with: temp-file
+closed: temp-file
+
+--- argument capture ---
+current x = 99
+first (deferred last, runs first)
+second
+third (deferred first, runs last)
+deferred x = 0
 ```
 
-**Checkpoint:** Remove `Person.String()` and run again — confirm `fmt.Println(p)` now uses `Address.String()` (promoted). Re-add `Person.String()` to restore the override.
+**Checkpoint:** Add a second `defer r.close()` inside `simulateWork` and observe it is called twice (LIFO — the second `defer` runs before the first). Remove the duplicate before continuing.
 
 ---
 
-### Lab 5: Error Handling — Wrapping and Unwrapping
+### Lab 5: Panic and Recover
 
-**What you'll practise:** Returning `(value, error)`, using `fmt.Errorf` with `%w` to wrap errors, and using `errors.Is` / `errors.As` to inspect wrapped errors.
+**What you'll practise:** Triggering a panic, using `defer` + `recover` to catch it, and converting a panic into a returned error.
 
 **Task:**
-Write a two-layer call chain where each layer wraps the error from the layer below. Use `errors.Is` to check for a sentinel error and `fmt.Errorf("%w")` to preserve the chain.
+Write `safeDiv` (integer division that converts a divide-by-zero panic into an error) and `mustPositive` (that panics intentionally for invalid input), then demonstrate both from `main`.
 
 **Steps:**
-1. Define a sentinel error `ErrNotFound`
-2. Write `findUser(id int) (string, error)` — returns `ErrNotFound` if id < 0
-3. Write `loadProfile(id int) (string, error)` — calls `findUser` and wraps any error
-4. In `main`, call `loadProfile` and use `errors.Is(err, ErrNotFound)` to distinguish error types
+1. Write `safeDiv(a, b int) (result int, err error)` using the `defer func() { recover() }()` pattern
+2. Write `mustPositive(n int) int` — panics with an explicit message if `n <= 0`
+3. Write `runMustPositive(n int)` — wraps `mustPositive` with a recover so a panic prints a warning without crashing the program
+4. Call all from `main` with valid and invalid inputs
 
 ```go
 package main
 
-import (
-    "errors"
-    "fmt"
-)
+import "fmt"
 
-var ErrNotFound = errors.New("not found")
-
-func findUser(id int) (string, error) {
-    if id < 0 {
-        return "", fmt.Errorf("findUser(%d): %w", id, ErrNotFound)
-    }
-    return fmt.Sprintf("User#%d", id), nil
+// safeDiv converts an integer divide-by-zero panic into a returned error.
+func safeDiv(a, b int) (result int, err error) {
+    defer func() {
+        if r := recover(); r != nil {
+            err = fmt.Errorf("panic recovered: %v", r)
+        }
+    }()
+    result = a / b
+    return result, nil
 }
 
-func loadProfile(id int) (string, error) {
-    user, err := findUser(id)
-    if err != nil {
-        return "", fmt.Errorf("loadProfile: %w", err)
+// mustPositive panics if n <= 0. Use this only for programmer-error invariants.
+func mustPositive(n int) int {
+    if n <= 0 {
+        panic(fmt.Sprintf("mustPositive: got %d, want > 0", n))
     }
-    return "Profile of " + user, nil
+    return n
+}
+
+// runMustPositive calls mustPositive and recovers any panic so it doesn't crash the program.
+func runMustPositive(n int) {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("warning: recovered panic:", r)
+        }
+    }()
+    result := mustPositive(n)
+    fmt.Println("mustPositive result:", result)
 }
 
 func main() {
-    profile, err := loadProfile(42)
-    if err != nil {
-        fmt.Println("error:", err)
-    } else {
-        fmt.Println(profile)
-    }
+    // safeDiv: normal case.
+    res, err := safeDiv(10, 2)
+    fmt.Printf("safeDiv(10, 2) = %d, err = %v\n", res, err)
 
-    _, err = loadProfile(-1)
-    if err != nil {
-        fmt.Println("error:", err)
-        fmt.Println("is ErrNotFound?", errors.Is(err, ErrNotFound))
-    }
+    // safeDiv: panic case.
+    res, err = safeDiv(10, 0)
+    fmt.Printf("safeDiv(10, 0) = %d, err = %v\n", res, err)
+
+    // mustPositive: valid.
+    runMustPositive(7)
+
+    // mustPositive: panics; recover catches it.
+    runMustPositive(-3)
+
+    fmt.Println("program continues after recovered panic")
 }
 ```
 
 **Expected output:**
 ```
-Profile of User#42
-error: loadProfile: findUser(-1): not found
-is ErrNotFound? true
+safeDiv(10, 2) = 5, err = <nil>
+safeDiv(10, 0) = 0, err = panic recovered: runtime error: integer divide by zero
+mustPositive result: 7
+warning: recovered panic: mustPositive: got -3, want > 0
+program continues after recovered panic
 ```
 
-**Checkpoint:** `errors.Is` returns `true` even though the error has been wrapped twice. Remove the `%w` verb from one `fmt.Errorf` call and confirm `errors.Is` returns `false` for that depth.
+**Checkpoint:** Remove the `defer`/`recover` from `runMustPositive` and call `runMustPositive(-3)` directly — confirm the program crashes with a stack trace. Restore `defer`/`recover` before continuing.
 
 ---
 
-### Lab 6 (Final): Contact Card
+### Lab 6: Recursion
 
-**What you'll practise:** Combining constructors, validation, pointer receivers, `fmt.Stringer`, and slice-based lookup in one cohesive program.
+**What you'll practise:** Writing recursive functions with base cases, comparing recursive and iterative approaches, and understanding the tradeoffs.
+
+**Task:**
+Implement `factorialRec`, `factorialIter`, and `fib`. Then write a recursive `treeSum` function over a simple tree structure.
+
+**Steps:**
+1. Write `factorialRec(n int) int` — recursive; base case `n <= 1` returns 1
+2. Write `factorialIter(n int) int` — iterative; produces the same results
+3. Write `fib(n int) int` — recursive Fibonacci; observe it becomes slow for large n
+4. Define `TreeNode` and write `treeSum(node *TreeNode) int` — recursively sums all node values
+
+```go
+package main
+
+import "fmt"
+
+// --- Factorial ---
+
+func factorialRec(n int) int {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorialRec(n-1)
+}
+
+func factorialIter(n int) int {
+    result := 1
+    for i := 2; i <= n; i++ {
+        result *= i
+    }
+    return result
+}
+
+// --- Fibonacci ---
+
+func fib(n int) int {
+    if n <= 1 {
+        return n
+    }
+    return fib(n-1) + fib(n-2)
+}
+
+// --- Tree ---
+
+type TreeNode struct {
+    Value    int
+    Children []*TreeNode
+}
+
+func treeSum(node *TreeNode) int {
+    if node == nil {
+        return 0
+    }
+    total := node.Value
+    for _, child := range node.Children {
+        total += treeSum(child)
+    }
+    return total
+}
+
+func main() {
+    // Factorial comparison.
+    for _, n := range []int{0, 1, 5, 10} {
+        r := factorialRec(n)
+        it := factorialIter(n)
+        fmt.Printf("factorial(%d): recursive=%d iterative=%d match=%v\n", n, r, it, r == it)
+    }
+
+    // Fibonacci — keep n small; recursive fib(40) takes seconds.
+    fmt.Println()
+    for _, n := range []int{0, 1, 5, 10, 15} {
+        fmt.Printf("fib(%d) = %d\n", n, fib(n))
+    }
+
+    // Tree sum.
+    fmt.Println()
+    root := &TreeNode{
+        Value: 1,
+        Children: []*TreeNode{
+            {Value: 2, Children: []*TreeNode{
+                {Value: 4},
+                {Value: 5},
+            }},
+            {Value: 3, Children: []*TreeNode{
+                {Value: 6},
+            }},
+        },
+    }
+    fmt.Println("tree sum:", treeSum(root)) // 1+2+3+4+5+6 = 21
+}
+```
+
+**Expected output:**
+```
+factorial(0): recursive=1 iterative=1 match=true
+factorial(1): recursive=1 iterative=1 match=true
+factorial(5): recursive=120 iterative=120 match=true
+factorial(10): recursive=3628800 iterative=3628800 match=true
+
+fib(0) = 0
+fib(1) = 1
+fib(5) = 5
+fib(10) = 55
+fib(15) = 610
+
+tree sum: 21
+```
+
+**Checkpoint:** Try `fib(40)` and observe the delay — it makes over a billion calls. Then try `factorialRec(0)` — confirm it returns 1, not 0 (the base case covers `n == 0`).
+
+---
+
+### Lab 7 (Final): Contact Card
+
+**What you'll practise:** Defining a struct with validation, writing a constructor, adding pointer and value receiver methods, implementing `fmt.Stringer`, and searching a slice.
 
 **Task:**
 Write `day-03/main.go` with a `Contact` struct, a validating constructor, a `String()` method, a `PrintCard` function, and a `FindByName` search over a slice of contacts.
 
 **Steps:**
-1. Define `type Contact struct` with `Name`, `Email`, `Phone`
-2. Write `NewContact(name, email, phone string) (Contact, error)` — error if email has no `@`
-3. Write `(c Contact) String() string` — formatted card line
+1. Define `type Contact struct` with `Name`, `Email`, and `Phone` fields
+2. Write `NewContact(name, email, phone string) (Contact, error)` — return an error if `email` does not contain `@`
+3. Write `(c Contact) String() string` — returns a formatted single-line representation
 4. Write `func PrintCard(c Contact)` — pretty-prints a bordered card
-5. Build a `[]Contact` slice and write `FindByName(contacts []Contact, name string) (Contact, bool)`
+5. Build a `[]Contact` slice and write `FindByName(contacts []Contact, name string) (Contact, bool)` using case-insensitive comparison
 6. Call all functions from `main`, including a failed construction and a failed lookup
 
 ```go
@@ -479,14 +1178,15 @@ func FindByName(contacts []Contact, name string) (Contact, bool) {
 }
 
 func main() {
-    contacts := []Contact{}
+    var contacts []Contact
 
-    for _, args := range [][3]string{
+    entries := [][3]string{
         {"Alice", "alice@example.com", "555-1234"},
         {"Bob", "bob@example.com", "555-5678"},
         {"Carol", "carol@example.com", "555-9012"},
-    } {
-        c, err := NewContact(args[0], args[1], args[2])
+    }
+    for _, e := range entries {
+        c, err := NewContact(e[0], e[1], e[2])
         if err != nil {
             fmt.Println("error:", err)
             continue
@@ -494,18 +1194,19 @@ func main() {
         contacts = append(contacts, c)
     }
 
-    // Try an invalid email
+    // Try an invalid email.
     _, err := NewContact("Dan", "not-an-email", "555-0000")
     fmt.Println("Validation error:", err)
+    fmt.Println()
 
-    // Print all cards
+    // Print all cards.
     for _, c := range contacts {
         PrintCard(c)
     }
 
-    // Search
+    // Search — case-insensitive.
     if c, ok := FindByName(contacts, "bob"); ok {
-        fmt.Println("Found:", c)
+        fmt.Println("Found:", c) // calls c.String() automatically
     }
     if _, ok := FindByName(contacts, "Zara"); !ok {
         fmt.Println("Zara not found")
@@ -516,12 +1217,22 @@ func main() {
 **Expected output:**
 ```
 Validation error: invalid email "not-an-email": must contain @
+
 ----------------------------------------
   Name:  Alice
   Email: alice@example.com
   Phone: 555-1234
 ----------------------------------------
-... (Bob and Carol cards follow)
+----------------------------------------
+  Name:  Bob
+  Email: bob@example.com
+  Phone: 555-5678
+----------------------------------------
+----------------------------------------
+  Name:  Carol
+  Email: carol@example.com
+  Phone: 555-9012
+----------------------------------------
 Found: Bob | bob@example.com | 555-5678
 Zara not found
 ```
@@ -530,21 +1241,37 @@ Zara not found
 
 ---
 
-## Day Project: Contact Card
+## Day Project Goal
 
-Define a `Contact` struct with at least: name, email, phone. Write:
-- A `NewContact(name, email, phone string) (Contact, error)` constructor that validates the email contains `@`
-- A `String() string` method implementing [`fmt.Stringer`](https://pkg.go.dev/fmt#Stringer)
-- A `func PrintCard(c Contact)` that pretty-prints the card
+Replace `main.go` with the Contact Card program from Lab 7. Once it runs correctly:
 
-**Extension ideas:** add a `contacts []Contact` slice and write `FindByName(name string) (Contact, bool)`.
+1. Run `go run .` from `day-03/` and verify the output matches the expected output above.
+2. Run `go vet .` — it should report no issues.
+3. Run `go fmt .` to format the file if needed.
+
+The program demonstrates the core Day 03 skills: structs, constructors with validation, methods, `fmt.Stringer`, and slice-based search with error handling.
+
+---
+
+## Extension Ideas
+
+- Add a `(c *Contact) UpdatePhone(phone string)` pointer-receiver method and call it after construction.
+- Write `FindAll(contacts []Contact, fn func(Contact) bool) []Contact` — a generic filter that accepts any predicate function.
+- Add struct embedding: create an `Address` struct and embed it in `Contact` so `c.City` works as a promoted field.
+- Add a `SortByName(contacts []Contact)` function using a closure-based comparison (explore `sort.Slice` from the standard library).
+- Write a memoised version of `fib` using a `map[int]int` (preview of Day 05).
+- Rewrite `factorialRec` to detect overflow for large inputs and return an error instead of silently wrapping around.
+
+---
 
 ## Official Documentation
 
-- [`fmt`](https://pkg.go.dev/fmt) — Errorf, Sprintf, Stringer interface
-- [`log`](https://pkg.go.dev/log) — Fatal and other logging functions
-- [Language Spec: Function types](https://go.dev/ref/spec#Function_types) — multiple return values
-- [Language Spec: Struct types](https://go.dev/ref/spec#Struct_types) — struct declarations and embedding
-- [Language Spec: Method declarations](https://go.dev/ref/spec#Method_declarations) — value and pointer receivers
-- [Effective Go: Methods](https://go.dev/doc/effective_go#methods) — pointer vs value receivers
-- [Go Tour: Methods and interfaces](https://go.dev/tour/methods/1) — interactive methods tour
+- [Language Spec: Function declarations](https://go.dev/ref/spec#Function_declarations)
+- [Language Spec: Function types (variadic)](https://go.dev/ref/spec#Function_types)
+- [Language Spec: Defer statements](https://go.dev/ref/spec#Defer_statements)
+- [Language Spec: Handling panics](https://go.dev/ref/spec#Handling_panics)
+- [The Go Blog: Defer, Panic, and Recover](https://go.dev/blog/defer-panic-and-recover)
+- [Built-in: panic](https://pkg.go.dev/builtin#panic)
+- [Built-in: recover](https://pkg.go.dev/builtin#recover)
+- [Language Spec: Struct types](https://go.dev/ref/spec#Struct_types)
+- [Language Spec: Method declarations](https://go.dev/ref/spec#Method_declarations)
