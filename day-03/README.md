@@ -474,7 +474,45 @@ func factorialIter(n int) int {
 }
 ```
 
-The iterative version is generally preferred: it avoids function call overhead and cannot exhaust the call stack for large inputs.
+The iterative version is generally preferred: it avoids function call overhead and cannot exhaust the call stack for large inputs. Understanding why requires knowing how Go manages the call stack.
+
+### Go Call Stack Mechanics
+
+When a function calls another function, the Go runtime pushes a **stack frame** onto the calling goroutine's stack. Each frame holds:
+
+- the function's local variables
+- its parameters and return values
+- the **return address** — where execution resumes when the function returns
+
+When the function returns, its frame is popped and that memory is reclaimed automatically.
+
+**Every goroutine has its own stack.** Goroutine stacks are completely independent. Two goroutines can call the same function concurrently without interfering with each other's locals because each has its own copy of the frame.
+
+**Goroutine stacks start small and grow dynamically.** When a goroutine is first created, its stack is only about 2–8 KB (the exact initial size has changed across Go versions — it was 8 KB before Go 1.4, now closer to 2–4 KB). As calls nest deeper and the current stack fills up, the runtime detects this automatically. It allocates a new, larger stack and copies all existing frames to the new location. This happens transparently — you do not manage it.
+
+**Growth has a ceiling.** Dynamic growth is not unlimited. By default a goroutine's stack can reach **1 GB** on 64-bit systems (controlled by `runtime/debug.SetMaxStack`). A recursion deep enough to hit that ceiling terminates the program with a fatal error:
+
+```
+runtime: goroutine stack exceeds 1000000000-byte limit
+runtime: sp=0xc0200e0388 stack=[0xc0200e0000, 0xc0400e0000]
+fatal error: stack overflow
+```
+
+You can trigger this yourself by calling a function with no base case:
+
+```go
+func infinite(n int) int {
+    return infinite(n + 1) // no base case — grows forever
+}
+```
+
+Running `infinite(0)` will print the stack-overflow message and exit.
+
+**Why iterative is safer for large inputs.** A loop reuses the same stack frame for every iteration — its memory footprint is constant. Each recursive call pushes a new frame. `factorial(1_000_000)` would push one million frames before the base case is reached. Go's dynamic stack would keep growing until it hit the 1 GB limit and crashed.
+
+**Contrast with C and Java.** In C, each OS thread gets a fixed stack at creation time — typically 1–8 MB. In Java, the JVM similarly fixes the thread stack. Overflow in those languages triggers an immediate `StackOverflowError` or segfault. Go's copying-stack approach is more forgiving for moderate depths, but the 1 GB ceiling still applies.
+
+**No tail-call optimisation (TCO).** Some languages (Scheme, Erlang) recognise when a function's last action is a recursive call and reuse the current frame rather than pushing a new one, making deep recursion use O(1) stack. **Go does not do this.** Even a perfectly tail-recursive Go function pushes one new frame per call. Never write Go code that relies on TCO.
 
 **Fibonacci — recursive (exponential time complexity):**
 
@@ -509,10 +547,6 @@ func sum(node *TreeNode) int {
     return total
 }
 ```
-
-**Stack depth:** Go goroutines start with a small stack (2–8 KB) that grows dynamically. Very deep recursion — millions of frames — can exhaust available memory. For large inputs, prefer iteration.
-
-**Tail recursion:** Go does NOT optimise tail calls. A tail-recursive function in Go still grows the stack one frame per call, just like a non-tail-recursive one. Do not rely on tail-call optimisation.
 
 ---
 
