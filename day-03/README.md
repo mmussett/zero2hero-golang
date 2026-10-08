@@ -749,67 +749,9 @@ var head *Node
 fmt.Println(head.Len()) // 0, not a panic
 ```
 
-#### Method sets — the rule that matters for interfaces
+#### Method sets — a note for later
 
-Go tracks which methods are reachable on a type and on a pointer to that type. These are called **method sets**.
-
-| Type | Method set |
-|------|-----------|
-| `T` | Value receiver methods only |
-| `*T` | Value receiver methods **and** pointer receiver methods |
-
-This asymmetry has one practical consequence: **interface satisfaction**.
-
-If an interface requires a method that is declared with a pointer receiver, only `*T` satisfies that interface — not `T`. This is covered in depth on Day 09, but the core rule is:
-
-- A method declared as `func (r Rectangle) Area() float64` belongs to both `Rectangle` and `*Rectangle`.
-- A method declared as `func (r *Rectangle) Scale(f float64)` belongs only to `*Rectangle`.
-
-If you store a `Rectangle` (not `*Rectangle`) in an interface variable, `Scale` is not available through that interface.
-
-**Concrete example — interface satisfaction failure:**
-
-```go
-package main
-
-import "fmt"
-
-type Rectangle struct {
-    Width, Height float64
-}
-
-func (r Rectangle) Area() float64 {
-    return r.Width * r.Height
-}
-
-// Pointer receiver — belongs to *Rectangle only, not Rectangle.
-func (r *Rectangle) Scale(factor float64) {
-    r.Width *= factor
-    r.Height *= factor
-}
-
-type Scaler interface {
-    Scale(factor float64)
-}
-
-func doubleIt(s Scaler) {
-    s.Scale(2)
-}
-
-func main() {
-    r := Rectangle{Width: 4, Height: 3}
-    fmt.Println(r.Area()) // 12
-
-    doubleIt(&r) // OK — *Rectangle has Scale in its method set
-    fmt.Println(r.Area()) // 48
-
-    // doubleIt(r) — uncommenting this line produces:
-    // cannot use r (variable of type Rectangle) as type Scaler in argument to doubleIt:
-    //   Rectangle does not implement Scaler (Scale method has pointer receiver)
-}
-```
-
-The error message is precise: Go tells you that `Scale` has a pointer receiver, which is why `Rectangle` (the value type) does not implement the interface. Using `&r` fixes it.
+Go tracks which methods belong to `T` versus `*T`. Value receiver methods belong to both; pointer receiver methods belong only to `*T`. This distinction becomes important when working with interfaces, which are covered in depth on **Day 09**. For now, the practical takeaway is: if a method must mutate the receiver, use a pointer receiver — and use `*T` when passing that value to code that expects a certain set of methods.
 
 #### Consistency rule
 
