@@ -770,18 +770,42 @@ If you store a `Rectangle` (not `*Rectangle`) in an interface variable, `Scale` 
 **Concrete example — interface satisfaction failure:**
 
 ```go
+package main
+
+import "fmt"
+
+type Rectangle struct {
+    Width, Height float64
+}
+
+func (r Rectangle) Area() float64 {
+    return r.Width * r.Height
+}
+
+// Pointer receiver — belongs to *Rectangle only, not Rectangle.
+func (r *Rectangle) Scale(factor float64) {
+    r.Width *= factor
+    r.Height *= factor
+}
+
 type Scaler interface {
     Scale(factor float64)
 }
 
-func doubleIt(s Scaler) { s.Scale(2) }
+func doubleIt(s Scaler) {
+    s.Scale(2)
+}
 
 func main() {
     r := Rectangle{Width: 4, Height: 3}
+    fmt.Println(r.Area()) // 12
 
     doubleIt(&r) // OK — *Rectangle has Scale in its method set
-    doubleIt(r)  // compile error: Rectangle does not implement Scaler
-                 //   (Scale method has pointer receiver)
+    fmt.Println(r.Area()) // 48
+
+    // doubleIt(r) — uncommenting this line produces:
+    // cannot use r (variable of type Rectangle) as type Scaler in argument to doubleIt:
+    //   Rectangle does not implement Scaler (Scale method has pointer receiver)
 }
 ```
 
