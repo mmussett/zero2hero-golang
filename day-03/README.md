@@ -264,32 +264,201 @@ result := func(x int) int {
 fmt.Println(result) // 25
 ```
 
-**Closures:** an anonymous function that references variables from the enclosing scope. The function captures those variables — not copies of their values at the time of creation, but references to the variables themselves.
+### Closures
+
+A closure is an anonymous function that **captures variables from the scope where it was defined**. The function and those variables travel together as a single unit — even after the outer function has returned.
+
+The critical detail: closures capture **references to the variables**, not copies of their values at the moment of creation. If the variable changes, the closure sees the new value.
+
+**Mental model:** think of a closure as a function with a private storage locker attached. Every call to the factory function (`makeCounter`, for example) hands out a new locker with its own contents — independent from every other closure produced by the same factory.
 
 ```go
+package main
+
+import "fmt"
+
 func makeCounter() func() int {
-    count := 0
+    count := 0             // this variable lives in the locker
     return func() int {
-        count++ // captures and modifies count from makeCounter's scope
+        count++            // reads and writes the same locker every call
         return count
     }
 }
 
 func main() {
-    counter := makeCounter()
-    fmt.Println(counter()) // 1
-    fmt.Println(counter()) // 2
-    fmt.Println(counter()) // 3
+    a := makeCounter()
+    b := makeCounter()     // independent locker — does not share count with a
 
-    // A second counter has its own independent count variable.
-    counter2 := makeCounter()
-    fmt.Println(counter2()) // 1
+    fmt.Println(a()) // 1
+    fmt.Println(a()) // 2
+    fmt.Println(b()) // 1  — b's own count starts from zero
+    fmt.Println(a()) // 3  — a continues from where it left off
 }
 ```
 
-**Passing functions as arguments:** Go functions are values, so any `func` type can be a parameter.
+#### Why use closures? What problem do they solve?
+
+Closures often look like clever tricks without an obvious purpose. They solve a specific problem: **pairing private state with behaviour, without defining a named type**.
+
+Consider the alternatives for "a counter that remembers its value":
+
+| Approach | Problem |
+|----------|---------|
+| Global variable | Anyone can read or reset it; not safe when you need many independent counters |
+| Pass count around as a parameter | Callers must manage the state, which leaks an implementation detail |
+| Define a `Counter` struct with methods | Correct, but heavyweight for simple cases |
+| Closure | State is private; you get a plain function value; zero ceremony |
+
+Closures are not a replacement for structs — they are the right tool when the state is **simple, private, and tied to a single behaviour**.
+
+#### Real-world use case 1: adder factory (parametric functions)
+
+A closure that fixes one argument and returns a function for the rest.
 
 ```go
+package main
+
+import "fmt"
+
+func makeAdder(x int) func(int) int {
+    return func(y int) int {
+        return x + y  // x is captured from makeAdder's scope
+    }
+}
+
+func main() {
+    add5  := makeAdder(5)
+    add10 := makeAdder(10)
+
+    fmt.Println(add5(3))  // 8
+    fmt.Println(add10(3)) // 13
+    fmt.Println(add5(7))  // 12
+}
+```
+
+`add5` and `add10` are ordinary `func(int) int` values. Callers do not need to know about `makeAdder` — they just call a function. This is useful when you need to configure a function once and pass it somewhere that only knows about the `func(int) int` signature.
+
+#### Real-world use case 2: memoisation (caching without changing the original function)
+
+Wrap any slow function with a cache. The cache map lives in the closure — hidden from callers.
+
+```go
+package main
+
+import "fmt"
+
+func memoize(fn func(int) int) func(int) int {
+    cache := map[int]int{}
+    return func(n int) int {
+        if v, ok := cache[n]; ok {
+            return v  // return cached result
+        }
+        result := fn(n)
+        cache[n] = result
+        return result
+    }
+}
+
+func slowSquare(n int) int {
+    // imagine this is expensive
+    return n * n
+}
+
+func main() {
+    fastSquare := memoize(slowSquare)
+
+    fmt.Println(fastSquare(4))  // 16  — computed
+    fmt.Println(fastSquare(4))  // 16  — from cache
+    fmt.Println(fastSquare(9))  // 81  — computed
+}
+```
+
+The `cache` map is completely private. Neither `slowSquare` nor the caller was modified.
+
+#### Real-world use case 3: passing configured behaviour as a function
+
+Sort a slice of strings by their length, not alphabetically. The comparator is a closure but the caller just sees a `func(string, string) bool`.
+
+```go
+package main
+
+import (
+    "fmt"
+    "sort"
+)
+
+func main() {
+    words := []string{"banana", "apple", "fig", "cherry", "date"}
+
+    sort.Slice(words, func(i, j int) bool {
+        return len(words[i]) < len(words[j])  // captures words from outer scope
+    })
+
+    fmt.Println(words) // [fig date apple banana cherry]
+}
+```
+
+The anonymous function passed to `sort.Slice` is a closure: it references `words`, which is defined in `main`. `sort.Slice` does not know or care about `words` — it just calls the function with two indices.
+
+#### The gotcha: loop variable capture
+
+This is the most common closure mistake in Go. All closures in a loop capture the **same loop variable** — not a snapshot of its value.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+    funcs := make([]func(), 3)
+
+    for i := 0; i < 3; i++ {
+        funcs[i] = func() { fmt.Println(i) }  // all capture the same i
+    }
+
+    // By the time we call them, the loop is done and i == 3.
+    funcs[0]() // 3  — not 0!
+    funcs[1]() // 3  — not 1!
+    funcs[2]() // 3  — not 2!
+}
+```
+
+**Fix: create a new variable per iteration.**
+
+```go
+for i := 0; i < 3; i++ {
+    i := i  // new variable that shadows the loop variable — each closure captures its own copy
+    funcs[i] = func() { fmt.Println(i) }
+}
+```
+
+Now each closure captures its own `i`:
+```
+0
+1
+2
+```
+
+> **Go 1.22+:** loop variables are now per-iteration by default, so the original code would print `0 1 2` in Go 1.22 and later. The fix shown above works in all versions.
+
+#### Closures vs structs
+
+Closures are not always the right choice. Here is when to prefer one over the other:
+
+| Prefer a closure when… | Prefer a struct when… |
+|------------------------|----------------------|
+| The state is simple (one or two variables) | The state has multiple fields |
+| The behaviour is a single function | The type needs multiple methods |
+| You are configuring a function to pass to another function | You need to pass the value to many places with a clear named type |
+| The state is truly private and never needs to be inspected | The state needs to be readable from outside |
+
+**Passing functions as values:** Go functions are first-class values — they can be stored in variables, passed as arguments, and returned from functions. Closures make this powerful because the function carries its context with it.
+
+```go
+package main
+
+import "fmt"
+
 func apply(nums []int, fn func(int) int) []int {
     result := make([]int, len(nums))
     for i, n := range nums {
@@ -300,8 +469,14 @@ func apply(nums []int, fn func(int) int) []int {
 
 func main() {
     nums := []int{1, 2, 3, 4, 5}
+
     doubled := apply(nums, func(n int) int { return n * 2 })
     fmt.Println(doubled) // [2 4 6 8 10]
+
+    // The multiplier (3) is captured from the outer scope.
+    factor := 3
+    tripled := apply(nums, func(n int) int { return n * factor })
+    fmt.Println(tripled) // [3 6 9 12 15]
 }
 ```
 
