@@ -733,6 +733,10 @@ The fix: store a pointer in the map instead (`map[string]*Rectangle`), or copy t
 A method with a pointer receiver can be called on a `nil` pointer — as long as the method does not dereference the nil. This is occasionally useful:
 
 ```go
+package main
+
+import "fmt"
+
 type Node struct {
     Val  int
     Next *Node
@@ -745,8 +749,14 @@ func (n *Node) Len() int {
     return 1 + n.Next.Len()
 }
 
-var head *Node
-fmt.Println(head.Len()) // 0, not a panic
+func main() {
+    var head *Node
+    fmt.Println(head.Len()) // 0, not a panic
+
+    // Build a small list: 1 -> 2 -> 3
+    head = &Node{Val: 1, Next: &Node{Val: 2, Next: &Node{Val: 3}}}
+    fmt.Println(head.Len()) // 3
+}
 ```
 
 #### Method sets — a note for later
