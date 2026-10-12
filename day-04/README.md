@@ -1,18 +1,149 @@
 # Day 04: Pointers and Value Semantics
 
-## Core Concept: Values by Default
+## Core Concepts
 
-Go passes everything by value. When you pass a struct to a function, the function receives a copy. Pointers opt into shared access.
+### Pass by Value
+
+When you call a function and pass a variable as an argument, Go makes a **complete copy** of that variable and hands the copy to the function. The function works entirely on its own copy. When the function returns, the copy is discarded.
+
+**The original variable in the caller is untouched — the function cannot reach it.**
+
+Think of it like a photocopier: you hand someone a photocopy of a document. They scribble all over it. Your original stays clean.
 
 ```go
-func increment(x int) { x++ }     // caller's x unchanged
+package main
 
-func incrementPtr(x *int) { *x++ } // caller's x is modified
+import "fmt"
 
-n := 5
-increment(n)    // n is still 5
-incrementPtr(&n) // n is now 6
+func double(n int) {
+    n = n * 2                        // modifies the copy
+    fmt.Println("inside:", n)        // 10
+}
+
+func main() {
+    x := 5
+    fmt.Println("before:", x)        // 5
+    double(x)
+    fmt.Println("after:", x)         // 5 — unchanged
+}
 ```
+
+**What is happening in memory:**
+
+```
+main's memory         double's memory
+┌──────────┐          ┌──────────┐
+│  x  =  5 │ ─copy──▶ │  n  =  5 │
+└──────────┘          └──────────┘
+                            │
+                       n = n * 2
+                            │
+                      ┌──────────┐
+                      │  n  = 10 │  ← double works on this copy
+                      └──────────┘
+function returns — copy is thrown away, x is still 5
+```
+
+Pass by value is Go's default for **all** arguments: integers, floats, booleans, strings, arrays, and structs. Every function call is a copy operation.
+
+---
+
+### Pass by Reference
+
+In a "pass by reference" model, instead of handing the function a photocopy, you hand it **directions to the original**. The function follows those directions, finds the original variable, and modifies it directly. Any change the function makes is immediately visible back in the caller.
+
+Go does not have built-in reference parameters. Instead, Go simulates reference behaviour using **pointers**. A pointer is a value that stores the **memory address** of another variable. When you pass a pointer, you are still passing by value (the address itself is copied), but the function can use that address to reach and modify the original variable.
+
+```go
+package main
+
+import "fmt"
+
+func doublePtr(n *int) {
+    *n = *n * 2                      // dereference: follow the address and modify the original
+    fmt.Println("inside:", *n)       // 10
+}
+
+func main() {
+    x := 5
+    fmt.Println("before:", x)        // 5
+    doublePtr(&x)                    // pass the address of x
+    fmt.Println("after:", x)         // 10 — x was modified!
+}
+```
+
+**What is happening in memory:**
+
+```
+main's memory         doublePtr's memory
+┌──────────────┐      ┌──────────────────────┐
+│ x = 5        │ ◀────│ n = 0xc0000b4010      │  n holds the address of x
+│ addr:        │      └──────────────────────┘
+│ 0xc0000b4010 │                │
+└──────────────┘         *n = *n * 2
+        ▲                       │
+        └───── follows address, modifies x directly
+```
+
+`&x` means "give me the address of x" — it produces a pointer.  
+`*n` means "follow the pointer n and give me the value stored there" — this is called **dereferencing**.
+
+When `doublePtr` does `*n = *n * 2`, it is not touching `n` (the address) — it is following `n` to reach `x` and modifying `x` in place.
+
+---
+
+### Go's model in plain terms
+
+| | Pass by value | Pass by pointer |
+|---|---|---|
+| What the function receives | A copy of the value | A copy of the **address** |
+| Can the function modify the original? | No | Yes, via `*pointer` |
+| Original variable after return | Unchanged | May be changed |
+| Typical use | Reading, computing | Mutating, large structs, optional values |
+
+Go always passes by value. Passing a pointer is still passing by value — the address is copied — but the address is a key that unlocks the original variable.
+
+---
+
+### Structs follow the same rules
+
+Structs are passed by value too. The entire struct is copied on every function call:
+
+```go
+package main
+
+import "fmt"
+
+type Point struct {
+    X, Y int
+}
+
+func move(p Point) {
+    p.X += 10
+    p.Y += 10
+    fmt.Println("inside move:", p)   // {11 11}
+}
+
+func movePtr(p *Point) {
+    p.X += 10
+    p.Y += 10
+    fmt.Println("inside movePtr:", *p) // {11 11}
+}
+
+func main() {
+    a := Point{1, 1}
+
+    move(a)
+    fmt.Println("after move:", a)    // {1 1} — unchanged
+
+    movePtr(&a)
+    fmt.Println("after movePtr:", a) // {11 11} — modified
+}
+```
+
+For small structs like `Point`, copying is fast and pass by value is often the right choice. For large structs (dozens of fields), passing a pointer avoids the copy cost.
+
+---
 
 ## Pointer Operators
 
