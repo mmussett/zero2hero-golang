@@ -31,17 +31,14 @@ func main() {
 **What is happening in memory:**
 
 ```
-main's memory         double's memory
-┌──────────┐          ┌──────────┐
-│  x  =  5 │ ─copy──▶ │  n  =  5 │
-└──────────┘          └──────────┘
-                            │
-                       n = n * 2
-                            │
-                      ┌──────────┐
-                      │  n  = 10 │  ← double works on this copy
-                      └──────────┘
-function returns — copy is thrown away, x is still 5
+  Caller (main)            Function (double)
+  ┌──────────────┐         ┌──────────────┐
+  │   x  =  5    │────────▶│   n  =  5    │
+  └──────────────┘         └──────────────┘
+
+  x is unchanged           double() works on n (a copy of x)
+                           n = n * 2  →  n becomes 10
+                           n is discarded when double() returns
 ```
 
 Pass by value is Go's default for **all** arguments: integers, floats, booleans, strings, arrays, and structs. Every function call is a copy operation.
@@ -75,14 +72,14 @@ func main() {
 **What is happening in memory:**
 
 ```
-main's memory         doublePtr's memory
-┌──────────────┐      ┌──────────────────────┐
-│ x = 5        │ ◀────│ n = 0xc0000b4010      │  n holds the address of x
-│ addr:        │      └──────────────────────┘
-│ 0xc0000b4010 │                │
-└──────────────┘         *n = *n * 2
-        ▲                       │
-        └───── follows address, modifies x directly
+  Caller (main)            Function (doublePtr)
+  ┌──────────────────┐     ┌──────────────────┐
+  │  x  =  5         │◀────│  n  =  0xc001    │
+  │  addr: 0xc001    │     └──────────────────┘
+  └──────────────────┘     n stores the address of x
+            ▲
+            └── *n = *n * 2 follows 0xc001 and writes 10 into x
+  x becomes 10
 ```
 
 `&x` means "give me the address of x" — it produces a pointer.  
