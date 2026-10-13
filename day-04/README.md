@@ -72,14 +72,19 @@ func main() {
 **What is happening in memory:**
 
 ```
-  Caller (main)            Function (doublePtr)
-  ┌──────────────────┐     ┌──────────────────┐
-  │  x  =  5         │◀────│  n  =  0xc001    │
-  │  addr: 0xc001    │     └──────────────────┘
-  └──────────────────┘     n stores the address of x
-            ▲
-            └── *n = *n * 2 follows 0xc001 and writes 10 into x
-  x becomes 10
+  main's memory            doublePtr's memory
+  ┌─────────────────┐      ┌─────────────────┐
+  │  x  =  5        │◀─────│  n  =  0xc001   │  n holds the address of x
+  │  at addr 0xc001 │      │                 │
+  └─────────────────┘      └─────────────────┘
+
+  *n = *n * 2 follows the address in n and writes the result into x:
+
+  main's memory            (n still points here)
+  ┌─────────────────┐      ┌─────────────────┐
+  │  x  =  10       │◀─────│  n  =  0xc001   │  *n wrote 10 into x
+  │  at addr 0xc001 │      │                 │
+  └─────────────────┘      └─────────────────┘
 ```
 
 `&x` means "give me the address of x" — it produces a pointer.  
