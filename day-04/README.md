@@ -174,18 +174,60 @@ var p *int  // nil
 
 Always check `p != nil` before dereferencing pointers that may be nil.
 
-## Pointers and Structs
+## Value Receivers and Pointer Receivers
+
+A **receiver** is the named type that appears in parentheses between the `func` keyword and the method name. It declares which type the method belongs to and gives you a local name for the value you are operating on.
+
+```go
+//      receiver
+//      ┌──────┐
+func (c Counter) Value() int { return c.n }
+//    ^
+//    local name for the Counter value inside this method
+```
+
+There are two kinds of receiver, and the difference is exactly the same as the pass-by-value vs pass-by-pointer distinction you just learned:
+
+### Value receiver `(c Counter)`
+
+The method receives a **copy** of the struct — the same as passing a struct to a plain function by value. Changes made inside the method do not affect the caller's variable.
 
 ```go
 type Counter struct{ n int }
 
-func (c *Counter) Inc() { c.n++ }        // pointer receiver — modifies c
-func (c Counter) Value() int { return c.n } // value receiver — read-only
+func (c Counter) Double() {
+    c.n *= 2   // mutates the copy only — caller's Counter is unchanged
+}
+```
+
+Use a value receiver when the method **only needs to read** the struct.
+
+### Pointer receiver `(c *Counter)`
+
+The method receives a **pointer to the original struct** — the same as passing `&counter` to a plain function. Changes made by dereferencing `c` persist back to the caller.
+
+```go
+func (c *Counter) Increment() {
+    c.n++   // c is *Counter — this modifies the original Counter
+}
+```
+
+Use a pointer receiver when the method **must change the struct's fields**.
+
+### Side by side
+
+```go
+type Counter struct{ n int }
+
+func (c Counter)  Value() int { return c.n } // value receiver — safe read-only copy
+func (c *Counter) Inc()       { c.n++ }      // pointer receiver — mutates original
 
 c := Counter{}
-c.Inc()              // Go auto-takes address: (&c).Inc()
+c.Inc()                // Go auto-takes address: (&c).Inc()
 fmt.Println(c.Value()) // 1
 ```
+
+**Go's auto-address rule:** when you call a pointer-receiver method on an addressable variable (`c.Inc()`), Go automatically rewrites it as `(&c).Inc()`. You do not write the `&` yourself. This only works for variables stored in memory — not for map values or function return values.
 
 ---
 
