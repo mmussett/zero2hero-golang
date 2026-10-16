@@ -82,6 +82,201 @@ Concatenating with `+=` in a loop is O(n²) — always use [`strings.Builder`](h
 
 ---
 
+## Runes
+
+### What is a rune?
+
+`rune` is Go's name for a single Unicode code point. It is an alias for `int32`:
+
+```go
+type rune = int32  // built into the language — not defined in any package
+```
+
+A **code point** is the number Unicode assigns to each character. Every character in every human script has a unique code point, written as U+XXXX in hexadecimal:
+
+| Character | Code point | Decimal |
+|-----------|-----------|---------|
+| `A` | U+0041 | 65 |
+| `é` | U+00E9 | 233 |
+| `世` | U+4E16 | 19990 |
+| `😀` | U+1F600 | 128512 |
+
+A rune literal is written with single quotes:
+
+```go
+var r rune = 'A'   // r == 65
+fmt.Println(r)     // 65    (the integer value)
+fmt.Printf("%c\n", r) // A (the character)
+fmt.Printf("%U\n", r) // U+0041 (Unicode format)
+```
+
+Rune literals support the same escape sequences as strings: `'\n'` (newline), `'\t'` (tab), `'\\'` (backslash), `'\''` (single quote).
+
+---
+
+### How Go stores strings: UTF-8 encoding
+
+A Go `string` is a sequence of **bytes**, not characters. The bytes are encoded as **UTF-8**, a variable-width encoding where each code point occupies 1 to 4 bytes:
+
+| Code point range | Bytes used | Examples |
+|-----------------|-----------|---------|
+| U+0000 – U+007F | 1 byte | ASCII: `A`, `0`, `!` |
+| U+0080 – U+07FF | 2 bytes | `é`, `ñ`, `ü` |
+| U+0800 – U+FFFF | 3 bytes | `世`, `界`, `€` |
+| U+10000 – U+10FFFF | 4 bytes | `😀`, `🎉` |
+
+This is why `len(s)` returns the **byte count**, which may be larger than the number of visible characters:
+
+```go
+s := "héllo"
+fmt.Println(len(s))           // 6 — é occupies 2 bytes (U+00E9 → 0xC3 0xA9)
+fmt.Println(len([]rune(s)))   // 5 — five visible characters
+```
+
+ASCII text is always 1 byte per character, so for pure ASCII strings `len(s)` equals the character count. Once you introduce non-ASCII characters, the counts diverge.
+
+---
+
+### The classic mistake: indexing a string by position
+
+Square-bracket indexing (`s[i]`) gives the **byte** at position `i`, not the character:
+
+```go
+s := "héllo"
+fmt.Println(s[0])          // 104 — byte value of 'h' (correct)
+fmt.Println(s[1])          // 195 — first byte of 'é' (0xC3), not 'é'!
+fmt.Printf("%c\n", s[1])   // Ã   — wrong character
+```
+
+`é` is encoded as two bytes (0xC3, 0xA9). Indexing at position 1 lands in the middle of that sequence. To index by **character** (code point), convert to `[]rune` first:
+
+```go
+runes := []rune(s)
+fmt.Printf("%c\n", runes[1])  // é — correct
+```
+
+---
+
+### Iterating over a string
+
+Go provides two ways to iterate:
+
+**By byte** — use a plain `for` loop with an index:
+
+```go
+s := "héllo"
+for i := 0; i < len(s); i++ {
+    fmt.Printf("byte[%d] = %d\n", i, s[i])
+}
+// byte[0] = 104
+// byte[1] = 195   ← first byte of é
+// byte[2] = 169   ← second byte of é
+// byte[3] = 108   ← l
+// byte[4] = 108   ← l
+// byte[5] = 111   ← o
+```
+
+**By rune (character)** — use `range`:
+
+```go
+for i, r := range s {
+    fmt.Printf("byte_offset[%d] = %c (U+%04X)\n", i, r, r)
+}
+// byte_offset[0] = h (U+0068)
+// byte_offset[1] = é (U+00E9)   ← i jumps from 1 to 3
+// byte_offset[3] = l (U+006C)
+// byte_offset[4] = l (U+006C)
+// byte_offset[5] = o (U+006F)
+```
+
+`range` decodes the UTF-8 for you. `i` is the **byte offset** of the start of the rune, which is why it skips from 1 to 3 (because `é` took 2 bytes at positions 1 and 2). `r` is the full rune (the Unicode code point).
+
+---
+
+### Converting between string, []byte, and []rune
+
+```go
+s := "héllo"
+
+b := []byte(s)       // decode string into raw bytes — fast, no allocation for short strings
+r := []rune(s)       // decode string into runes (code points) — allocates
+
+s2 := string(b)      // encode bytes back to string
+s3 := string(r)      // encode runes back to string
+
+// Single rune ↔ string
+r1 := 'é'
+fmt.Println(string(r1))    // "é"
+fmt.Println([]byte(string(r1))) // [195 169] — the two UTF-8 bytes
+```
+
+**When to use each:**
+
+| Need | Use |
+|------|-----|
+| Raw byte manipulation (network, file) | `[]byte(s)` |
+| Character-level operations (count, index, reverse) | `[]rune(s)` |
+| Check or print a single character | `rune` |
+
+---
+
+### Rune classification with the `unicode` package
+
+The [`unicode`](https://pkg.go.dev/unicode) package provides functions to classify runes:
+
+```go
+package main
+
+import (
+    "fmt"
+    "unicode"
+)
+
+func main() {
+    chars := []rune{'A', 'é', '3', ' ', '!', '世'}
+    for _, r := range chars {
+        fmt.Printf("%c  letter=%-5v digit=%-5v space=%-5v upper=%-5v\n",
+            r,
+            unicode.IsLetter(r),
+            unicode.IsDigit(r),
+            unicode.IsSpace(r),
+            unicode.IsUpper(r),
+        )
+    }
+}
+```
+
+Output:
+```
+A  letter=true  digit=false space=false upper=true
+é  letter=true  digit=false space=false upper=false
+3  letter=false digit=true  space=false upper=false
+   letter=false digit=false space=true  upper=false
+!  letter=false digit=false space=false upper=false
+世  letter=true  digit=false space=false upper=false
+```
+
+---
+
+### Quick reference
+
+```go
+r := '世'
+
+fmt.Println(r)              // 19990            integer value
+fmt.Printf("%c\n", r)      // 世               character
+fmt.Printf("%U\n", r)      // U+4E16           Unicode code point
+fmt.Printf("%d\n", r)      // 19990            decimal
+fmt.Println(string(r))     // 世               single-char string
+fmt.Println(len(string(r)))// 3                bytes in UTF-8
+
+s := "hello, 世界"
+fmt.Println(len(s))          // 13  (7 ASCII + 3 + 3)
+fmt.Println(len([]rune(s)))  // 9   (9 characters)
+```
+
+---
+
 ## Labs
 
 ### Lab 1: Arrays — Fixed Size and Value Semantics
