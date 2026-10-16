@@ -14,29 +14,224 @@ Because `[3]int` and `[4]int` are different types, functions usually accept slic
 
 ## Slices (The Idiomatic List)
 
-A slice is a view into an underlying array: three words `(pointer, length, capacity)`.
+A slice is a three-word header that describes a window into an underlying array:
 
-```go
-s := []int{10, 20, 30}
-s = append(s, 40)         // may reallocate; always use returned slice
-s2 := s[1:3]              // [20 30] — shares memory with s
+```
+┌─────────┬────────┬──────────┐
+│ pointer │ length │ capacity │
+└─────────┴────────┴──────────┘
+     │         │         │
+     │         │         └── how many elements the backing array can hold
+     │         └──────────── how many elements are currently visible
+     └────────────────────── where the window starts in the backing array
 ```
 
-Key idioms:
+The backing array is allocated separately. Multiple slices can point to the same backing array (they share memory).
+
+---
+
+### Creating slices
+
+**Slice literal** — the most common way:
 
 ```go
-// Build a slice of known length
-result := make([]string, 0, len(input))
-for _, v := range input {
-    result = append(result, process(v))
+s := []int{10, 20, 30}   // len=3, cap=3
+```
+
+**`make`** — preallocate when you know the size up front:
+
+```go
+s := make([]int, 5)       // len=5, cap=5  — all elements are 0
+s := make([]int, 0, 10)   // len=0, cap=10 — empty but pre-allocated
+```
+
+Using `make([]T, 0, n)` before a loop avoids repeated reallocations as you `append`.
+
+**`nil` slice** — the zero value; safe to use immediately:
+
+```go
+var s []int               // len=0, cap=0, s == nil
+s = append(s, 1)          // fine — append handles nil correctly
+```
+
+A `nil` slice and an empty slice (`[]int{}`) behave identically with `len`, `cap`, and `append`. The only difference is `s == nil`.
+
+---
+
+### append — adding elements
+
+`append` adds elements to the end of a slice and always returns the (possibly new) slice. **Always assign the result back.**
+
+```go
+s := []int{1, 2, 3}
+s = append(s, 4)          // [1 2 3 4]
+s = append(s, 5, 6, 7)    // [1 2 3 4 5 6 7]  — multiple at once
+```
+
+**Appending one slice to another** — use the `...` spread operator:
+
+```go
+a := []int{1, 2, 3}
+b := []int{4, 5, 6}
+a = append(a, b...)       // [1 2 3 4 5 6]
+```
+
+**How reallocation works:**
+
+When `append` needs more space than `cap` allows, Go allocates a new, larger backing array (roughly doubling in size), copies all elements, and returns a slice pointing to the new array. The old backing array is abandoned.
+
+```go
+s := make([]int, 0, 3)
+fmt.Println(len(s), cap(s))  // 0 3
+
+s = append(s, 1, 2, 3)
+fmt.Println(len(s), cap(s))  // 3 3
+
+s = append(s, 4)             // cap exceeded — new backing array
+fmt.Println(len(s), cap(s))  // 4 6 (or similar; exact growth factor varies)
+```
+
+Because reallocation returns a new slice, code like `append(s, x)` without reassigning `s` silently loses the new element. Always write `s = append(s, x)`.
+
+---
+
+### Iterating over a slice
+
+**`range`** — the idiomatic way; gives index and value:
+
+```go
+fruits := []string{"apple", "banana", "cherry"}
+
+for i, v := range fruits {
+    fmt.Printf("[%d] = %s\n", i, v)
+}
+// [0] = apple
+// [1] = banana
+// [2] = cherry
+```
+
+Use `_` to discard the index or value when you don't need it:
+
+```go
+for _, v := range fruits {   // index not needed
+    fmt.Println(v)
 }
 
-// Copy to avoid shared backing array
-clone := make([]int, len(s))
-copy(clone, s)
+for i := range fruits {      // value not needed (Go 1.22+: also works for just the index)
+    fmt.Println(i)
+}
 ```
 
-`nil` slice has `len == 0` and `cap == 0`. It is safe to `append` to a nil slice.
+**Plain `for` loop** — when you need finer control (e.g., skipping elements or iterating in reverse):
+
+```go
+// Reverse iteration
+for i := len(fruits) - 1; i >= 0; i-- {
+    fmt.Println(fruits[i])
+}
+```
+
+> **`range` gives a copy of each element.** Modifying `v` inside the loop does not change the slice. To modify elements in place, use the index: `fruits[i] = "mango"`.
+
+---
+
+### Slicing — creating sub-slices
+
+The expression `s[low:high]` creates a new slice header pointing into the same backing array. No data is copied.
+
+```go
+s := []int{0, 1, 2, 3, 4, 5}
+
+a := s[1:4]   // [1 2 3]       — elements at index 1, 2, 3
+b := s[:3]    // [0 1 2]       — from the start
+c := s[3:]    // [3 4 5]       — to the end
+d := s[:]     // [0 1 2 3 4 5] — the whole slice
+```
+
+Because sub-slices share the backing array, modifying one is visible through the other:
+
+```go
+a[0] = 99
+fmt.Println(s)  // [0 99 2 3 4 5] — s[1] changed!
+```
+
+**Three-index slice** `s[low:high:max]` limits the capacity of the result, preventing accidental writes through the sub-slice:
+
+```go
+safe := s[1:4:4]   // len=3, cap=3 — cannot grow into s[4], s[5]
+```
+
+---
+
+### copy — independent duplicate
+
+`copy(dst, src)` copies elements from `src` to `dst`, returns the number copied, and the two slices are independent afterwards:
+
+```go
+original := []int{1, 2, 3, 4, 5}
+clone := make([]int, len(original))
+copy(clone, original)
+
+clone[0] = 99
+fmt.Println(original) // [1 2 3 4 5] — unchanged
+fmt.Println(clone)    // [99 2 3 4 5]
+```
+
+`copy` copies `min(len(dst), len(src))` elements. If `dst` is shorter, only `len(dst)` elements are copied.
+
+---
+
+### Common in-place operations
+
+**Delete an element (order preserved):**
+
+```go
+s := []int{10, 20, 30, 40, 50}
+i := 2  // delete index 2
+s = append(s[:i], s[i+1:]...)
+fmt.Println(s)  // [10 20 40 50]
+```
+
+**Delete an element (fast, order not preserved):**
+
+```go
+s[i] = s[len(s)-1]  // overwrite target with last element
+s = s[:len(s)-1]    // trim the last slot
+fmt.Println(s)      // [10 20 50 40]  — 50 moved to position 2
+```
+
+**Insert an element at index `i`:**
+
+```go
+s := []int{10, 20, 30, 40}
+i := 2
+s = append(s[:i], append([]int{99}, s[i:]...)...)
+fmt.Println(s)  // [10 20 99 30 40]
+```
+
+**Filter (keep only even numbers):**
+
+```go
+s := []int{1, 2, 3, 4, 5, 6}
+result := s[:0]  // re-use the backing array — no allocation
+for _, v := range s {
+    if v%2 == 0 {
+        result = append(result, v)
+    }
+}
+fmt.Println(result)  // [2 4 6]
+```
+
+---
+
+### len and cap
+
+| Expression | Meaning |
+|-----------|---------|
+| `len(s)` | Number of elements currently in the slice |
+| `cap(s)` | Total elements the backing array can hold from `s[0]` |
+| `len(s) == 0` | Slice is empty (true for both `nil` and `[]int{}`) |
+| `s == nil` | Slice is nil (not merely empty) |
 
 ## Strings
 
